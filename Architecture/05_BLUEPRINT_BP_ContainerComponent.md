@@ -1,4 +1,9 @@
-# 05_BLUEPRINT_BP_ContainerComponent.md
+# 05 — Blueprint: BP_ContainerComponent
+### Componente: BP_ContainerComponent
+### Base Asset: EasySurvivalRPGv5
+### Fuente: Exports .txt raw — sesión Light Paradox
+
+---
 
 ## TryMoveItemToContainerSlot (Función)
 *Intento de mover un objeto de un slot del contenedor a otro slot del contenedor destino.*
@@ -27,7 +32,7 @@
                     → `AmountRemaining` = AddAmountToSlot(`LocalToSlot`, `Amount`)
                       → `AmountToRemove` = `Amount - AmountRemaining`
                         → RemoveAmountFromSlot(`LocalFromSlot`, `AmountToRemove`)
-                          → `LocalUseMaxAmount` = (`Amount` > 0) // Si se usó la cantidad máxima
+                          → `LocalUseMaxAmount` = (`Amount` > 0)
                           → **Return**
                   → **False** (Los objetos NO se pueden apilar)
                     → **Branch** (Comprueba si `ItemIsValid(LocalToItem)` es falso → el slot destino está vacío)
@@ -65,5 +70,72 @@
             → CalculateWeight()
               → Array_Clear(`ChangedSlots`)
     → **False**
-      → SetComponentTickEnabled(false) // Desactiva el tick si no hay cambios
+      → SetComponentTickEnabled(false)
         → **Return**
+
+---
+
+## CheckContainerSlotForItem — Implementación Parent (Función)
+*Fuente: BP_ContainerComponent base. Valida si un ítem puede ser asignado a un slot específico evaluando restricciones definidas en ContainerSlotSettings.*
+
+### Variables relevantes
+
+| Variable | Tipo | Notas |
+|---|---|---|
+| `ContainerSlotSettings` | Array de STR_ContainerSlotSettings | Define restricciones por slot. Instance Editable. Default: 0 elementos en la clase base — se configura por instancia. |
+
+### STR_ContainerSlotSettings — campos confirmados
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| `Name` | String | Nombre display del slot |
+| `Description` | String | Descripción opcional |
+| `Background` | Texture2D | Textura de fondo del widget del slot |
+| `RestrictionQuery` | Gameplay Tag Query | Define qué tags debe tener un ítem para ser aceptado en este slot |
+| `RestrictionEnabledItems` | Array | Ítems específicos permitidos (normalmente vacío) |
+| `RestrictionDisabledItems` | Array | Ítems específicos bloqueados (normalmente vacío) |
+
+### Flujo de la función:
+
+```
+Entry (Slot: Integer, Item: STR_ItemData)
+  → GET LocalItem desde contenedor
+  → IS VALID INDEX (Slot)
+      → False → [termina, comportamiento no validado]
+  → GET ContainerSlotSettings[Slot] → LocalSlotSettings
+  → Branch (LocalSlotSettings es válido)
+      → False → [termina, sin restricción aplicada]
+      → True  →
+          Break STR_ContainerSlotSettings
+            → LocalRestrictionQuery
+            → LocalEnabledItems
+            → LocalDisabledItems
+          GET LocalRestrictionQuery
+          SET LocalEnabledItems
+          SET LocalDisabledItems
+          → For Each Loop (LocalDisabledItems)
+              → Item Handles Are Equal
+                  → Get Item Handle
+          → Get Item Tags (Item) → ItemTags
+          → Branch
+              → Does Container Match Tag Query
+                  (Tag Container: ItemTags, Tag Query: LocalRestrictionQuery)
+                  → Return Value
+          → IS VALID INDEX
+          → For Each Loop
+              → Item Handles Are Equal
+                  → Get Item Handle (LocalItem)
+          → Branch → Return Node (Result)
+```
+
+### Notas de arquitectura
+
+- `ContainerSlotSettings` tiene **Instance Editable** activado. El array base tiene **0 elementos** — cada instancia del componente define sus propios slots en el panel Details del Blueprint que lo contiene.
+- Cuando el índice del slot no tiene entrada en `ContainerSlotSettings`, el sistema no aplica restricción. Cualquier ítem es aceptado. Este es el comportamiento observado en slots nuevos sin configurar.
+- La validación por `RestrictionQuery` usa **Gameplay Tag Query** con formato `ALL( ALL( TagName ))`. Este formato debe respetarse exactamente al configurar slots nuevos.
+- Esta función es el **Parent** que llama `BP_EquipmentComponent` en su override de `CheckContainerSlotForItem`.
+
+---
+
+*Archivo actualizado — sesión Light Paradox*
+*Secciones agregadas: CheckContainerSlotForItem Parent, STR_ContainerSlotSettings*
