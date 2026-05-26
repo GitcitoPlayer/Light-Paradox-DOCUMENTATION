@@ -228,22 +228,8 @@ Entry (Operation, PointerEvent) →
 ## Notas de arquitectura
 
 - `UI_ItemSlot` **llama directamente** a `UpdateItemData` desde varios puntos (EventGraph, SetContainerReference, DelayAssignment). Esto es relevante para el gate `bSlotUpdateEnabled` definido en `03_LIGHTPARADOX_PROJECT_RULES.md`.
-- El widget **se auto-actualiza** vía `Construct` y `PreConstruct`, lo cual viola **Rule 3.3** del documento de reglas del proyecto (no self-update logic). Pendiente de resolver en clase hija `UI_ItemSlot_LP`.
+- El widget **se auto-actualiza** vía `Construct` y `PreConstruct`, lo cual viola **Rule 3.3** del documento de reglas del proyecto (no self-update logic).
 - El sistema de decay usa un timer propio con `SetTimerDelegate → UpdateDecayTick`. Este timer **vive en el slot**, no en `UI_HUD`.
 - `bUseItem` actúa como gate interno del slot para controlar si se muestra el ícono real o el fondo vacío.
 
 ---
-
-## Deuda técnica registrada
-
-| Problema | Regla violada | Estado |
-|---|---|---|
-| Auto-update en Construct y PreConstruct | Rule 3.3 | Pendiente — resolver en UI_ItemSlot_LP |
-| Timer de decay vive en el slot, no en UI_HUD | Rule 3.4 | Pendiente — requiere refactor de decay |
-| Ediciones en asset base, no en clase hija | Rule 4.1 | Pendiente — migrar a UI_ItemSlot_LP |
-
----
-
-*Archivo actualizado — sesión Light Paradox (RuneAltar ScrollBox visibility)*
-*Sin cambios de lógica en esta sesión — deuda técnica registrada*
-*Project: Light Paradox · Base: EasySurvivalRPGv5*
