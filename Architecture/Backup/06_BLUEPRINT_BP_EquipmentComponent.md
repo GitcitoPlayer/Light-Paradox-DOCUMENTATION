@@ -17,17 +17,13 @@ Se instancia dentro de `BP_Character_Player` como componente `EquipmentContainer
 
 | Variable | Tipo | Notas |
 |---|---|---|
-| `EquipmentSlots` | Array de E_EquipmentSlot | Define qué slots de equipamiento existen y en qué orden. El índice del array corresponde al Slot Number usado por los widgets UI_ItemSlot. Instance Editable — configurable desde el panel Details del componente directamente en BP_EquipmentComponent, y también desde su instancia en BP_Character_Player. |
+| `EquipmentSlots` | Array de E_EquipmentSlot | Define qué slots de equipamiento existen y en qué orden. El índice del array corresponde al Slot Number usado por los widgets UI_ItemSlot. |
 
 > **Nota:** `ContainerSlotSettings` no se define aquí — se hereda de `BP_ContainerComponent` y se configura por instancia en `BP_Character_Player`.
 
 ---
 
-## Enums relacionados
-
-### E_EquipmentSlot
-Define los tipos de slot de equipamiento y su índice numérico.
-El orden de los valores determina el índice — **nunca reordenar valores existentes**.
+## E_EquipmentSlot — valores confirmados
 
 | Índice | Display Name |
 |---|---|
@@ -46,24 +42,7 @@ El orden de los valores determina el índice — **nunca reordenar valores exist
 | 12 | ToolRuneWord |
 | 13 | Hello |
 
-> **Nota:** El valor `Hello` (índice 13) es un valor de prueba. No tiene slot funcional asignado.
-
-### E_EquipmentType
-Enum separado de `E_EquipmentSlot`. Confirmado como asset independiente a partir de inspección directa.
-Contiene los mismos Display Names que `E_EquipmentSlot` — se mantiene sincronizado manualmente al agregar slots nuevos.
-El orden de los valores determina el índice — **nunca reordenar valores existentes**.
-
-> **Nota:** El contenido completo de `E_EquipmentType` no fue inspeccionado en detalle.
-> Se infiere que contiene al menos los mismos valores que `E_EquipmentSlot` para los slots funcionales confirmados.
-
----
-
-## Regla crítica — orden de enumeradores
-
-Al agregar un valor nuevo a `E_EquipmentSlot` o `E_EquipmentType`:
-- **Siempre agregar al final** usando Add Enumerator
-- **Nunca reordenar** valores existentes
-- Reordenar rompe la correspondencia índice ↔ slot en todos los sistemas que dependen del orden numérico
+> **Nota:** El valor `Hello` (índice 13) es un valor de prueba. No tiene slot funcional asignado. No documentado como sistema activo.
 
 ---
 
@@ -71,10 +50,6 @@ Al agregar un valor nuevo a `E_EquipmentSlot` o `E_EquipmentType`:
 
 ### Item Is Equipment (Función)
 *Devuelve true si el ítem es de tipo equipment. También devuelve el EquipmentType correspondiente.*
-
-> **Nota:** Esta función puede vivir en `BP_EquipmentComponent` o en `BP_ItemsLibrary` como función compartida.
-> La ubicación exacta debe verificarse en el editor — buscar la función en ambos Blueprints.
-> Hasta confirmar, se documenta en este archivo por ser donde fue hallada originalmente.
 
 **Outputs:**
 - `Result` (Boolean)
@@ -99,10 +74,8 @@ Al agregar un valor nuevo a `E_EquipmentSlot` o `E_EquipmentType`:
 | EasyRPG.Items.Equipment.Tool | Tool |
 | EasyRPG.Items.Equipment.HeadRuneWord | HeadRuneWord |
 | EasyRPG.Items.Equipment.BodyRuneWord | BodyRuneWord |
-| EasyRPG.Items.Equipment.PantsRuneWord | PantsRuneWord |
 
-> **Nota:** Al momento de la última sesión solo se confirmaron 9-10 entradas.
-> Los tags HandsRuneWord, BackpackRuneWord, ToolRuneWord deben agregarse siguiendo el mismo patrón si sus slots están activos.
+> **Nota:** Al momento de esta sesión solo se confirmaron 9 entradas. Los tags PantsRuneWord, HandsRuneWord, BackpackRuneWord, ToolRuneWord deben agregarse siguiendo el mismo patrón si sus slots están activos.
 
 #### Flujo de la función:
 
@@ -126,9 +99,7 @@ Entry (Item: STR_ItemData)
         EquipmentType = Head  ← valor hardcodeado por defecto
 ```
 
-> **Advertencia:** El Return Node del False path tiene `EquipmentType = Head` hardcodeado.
-> Si un ítem no tiene tag de equipment reconocido, la función devuelve Head como tipo por defecto.
-> Esto no causa bugs visibles porque `CheckContainerSlotForItem` evalúa `Result = false` primero.
+> **Advertencia:** El Return Node del False path tiene `EquipmentType = Head` hardcodeado. Si un ítem no tiene tag de equipment reconocido, la función devuelve Head como tipo por defecto. Esto no causa bugs visibles porque `CheckContainerSlotForItem` evalúa `Result = false` primero.
 
 ---
 
@@ -166,20 +137,10 @@ Entry (Slot: Integer, Item: STR_ItemData)
 ## Notas de arquitectura general
 
 - `BP_EquipmentComponent` **no define** `ContainerSlotSettings` internamente. Esa configuración vive en la instancia del componente dentro de `BP_Character_Player`.
-- Agregar un slot nuevo requiere modificaciones en **cuatro lugares** dentro de este Blueprint y sus assets relacionados: `E_EquipmentSlot` (enum), `E_EquipmentType` (enum), `EquipmentSlots` array (instancia en BP_EquipmentComponent), y `Local Equipment Types` Map. Ver **07_BLUEPRINT_BP_Character_Player.md** para las modificaciones adicionales requeridas en la instancia y en UI.
+- Agregar un slot nuevo requiere modificaciones en **tres lugares distintos** en este componente: `E_EquipmentSlot` (enum), `EquipmentSlots` array, y `Local Equipment Types` Map. Ver **07_BLUEPRINT_BP_Character_Player.md** para la cuarta modificación requerida en la instancia.
 - Ediciones realizadas directamente en el asset base de ESRPGv5 — no en clase hijo. Deuda técnica pendiente de resolver según Rule 4.1 de `03_LIGHTPARADOX_PROJECT_RULES.md`.
 
 ---
 
-## Deuda técnica registrada
-
-| Problema | Regla violada | Estado |
-|---|---|---|
-| Ediciones en asset base, no en clase hija | Rule 4.1 | Pendiente |
-| Ubicación exacta de Item Is Equipment sin confirmar (BP_EquipmentComponent vs BP_ItemsLibrary) | — | Pendiente verificación |
-
----
-
-*Archivo actualizado — sesión Light Paradox*
-*Cambios: E_EquipmentType documentado, regla de orden de enumeradores, PantsRuneWord agregado a Local Equipment Types, nota sobre BP_ItemsLibrary*
-*Project: Light Paradox · Base: EasySurvivalRPGv5*
+*Archivo creado — sesión Light Paradox*
+*Sistema documentado: Equipment slot validation pipeline*
