@@ -37,20 +37,27 @@ Equipment_[NombreSlot]Slot_2  (tercer slot del mismo tipo)
 
 ### Slots de Head Rune Word confirmados
 
-| Widget | Slot Number |
-|---|---|
-| `Equipment_HeadRuneSlot` | 7 |
-| `Equipment_HeadRuneSlot_1` | 14 |
-| `Equipment_HeadRuneSlot_2` | 15 |
-| `Equipment_HeadRuneSlot_3` | 16 |
-| `Equipment_HeadRuneSlot_4` | 17 |
-| `Equipment_HeadRuneSlot_5` | 18 |
-| `Equipment_HeadRuneSlot_6` | 19 |
-| `Equipment_HeadRuneSlot_7` | 20 |
-| `Equipment_HeadRuneSlot_8` | 21 |
-| `Equipment_HeadRuneSlot_9` | 22 |
+| Widget | Slot Number | Visibility default |
+|---|---|---|
+| `Equipment_HeadRuneSlot` | 7 | Visible / Not Hit-Testable |
+| `Equipment_HeadRuneSlot_1` | 14 | Collapsed |
+| `Equipment_HeadRuneSlot_2` | 15 | Collapsed |
+| `Equipment_HeadRuneSlot_3` | 16 | Collapsed |
+| `Equipment_HeadRuneSlot_4` | 17 | Collapsed |
+| `Equipment_HeadRuneSlot_5` | 18 | Collapsed |
+| `Equipment_HeadRuneSlot_6` | 19 | Collapsed |
+| `Equipment_HeadRuneSlot_7` | 20 | Collapsed |
+| `Equipment_HeadRuneSlot_8` | 21 | Collapsed |
+| `Equipment_HeadRuneSlot_9` | 22 | Collapsed |
 
-> **Nota de nomenclatura:** El slot original no tiene sufijo numérico. Los duplicados comienzan en `_1` hasta `_9`. Esta convención debe mantenerse para los grupos de Body, Pants, Hands, Feet, Backpack y Tool cuando se creen.
+> **Nota de Lógica 3:** Los slots 2-10 (`Equipment_HeadRuneSlot_1` al `_9`) fueron
+> cambiados a `Collapsed` en el Designer como parte de la implementación de la
+> Lógica 3 (asignación de runas en orden). Solo `Equipment_HeadRuneSlot` (Slot 7)
+> arranca visible al abrir el Altar.
+
+> **Nota de nomenclatura:** El slot original no tiene sufijo numérico. Los duplicados
+> comienzan en `_1` hasta `_9`. Esta convención debe mantenerse para los grupos de
+> Body, Pants, Hands, Feet, Backpack y Tool cuando se creen.
 
 ### Cómo agregar un widget de slot nuevo
 
@@ -67,10 +74,18 @@ Equipment_[NombreSlot]Slot_2  (tercer slot del mismo tipo)
 
 | Widget | Tipo | Notas |
 |---|---|---|
-| `ScrollBox_EquipmentSlots` | ScrollBox | Contiene todos los slots de equipment. Default visibility: **Collapsed**. Se revela únicamente al abrir BP_Building_Altar. |
+| `Equipment Scroll Box` | ScrollBox | Contiene los slots de cosméticos. Siempre visible — NO se oculta con ShowRuneSlots/HideRuneSlots. |
+| `Head Rune Box` | VerticalBox | Contiene los 10 slots de runa de Head directamente. Se muestra/oculta con ShowRuneSlots/HideRuneSlots. |
+| `Body Rune Box` | VerticalBox | Contenedor de runas de Body. Se muestra/oculta con ShowRuneSlots/HideRuneSlots. |
+| `Pants Rune Box` | VerticalBox | Contenedor de runas de Pants. Se muestra/oculta con ShowRuneSlots/HideRuneSlots. |
+| `Hands Rune Box` | VerticalBox | Contenedor de runas de Hands. Se muestra/oculta con ShowRuneSlots/HideRuneSlots. |
+| `Feet Rune Box` | VerticalBox | Contenedor de runas de Feet. Se muestra/oculta con ShowRuneSlots/HideRuneSlots. |
+| `Backpack Rune Box` | VerticalBox | Contenedor de runas de Backpack. Se muestra/oculta con ShowRuneSlots/HideRuneSlots. |
+| `Tool Rune Box` | VerticalBox | Contenedor de runas de Tool. Se muestra/oculta con ShowRuneSlots/HideRuneSlots. |
 
-> **Nombre exacto del ScrollBox pendiente de confirmar.** El nombre usado arriba es referencial.
-> Verificar nombre real en el panel Hierarchy de UI_Character.
+> **Nota:** `Equipment Scroll Box` fue removido de `ShowRuneSlots` y `HideRuneSlots`
+> a petición del cliente — los cosméticos deben estar visibles en todo momento.
+> Solo los 7 Rune Box se muestran/ocultan al interactuar con el Altar.
 
 ---
 
@@ -119,16 +134,37 @@ Al agregar slots nuevos de otro grupo (Body, Pants, etc.):
 | `UpdateCharacterLevel` | No inspeccionada en esta sesión |
 | `ShowRuneSlots` | **Nueva — creada en sesión Light Paradox** |
 | `HideRuneSlots` | **Nueva — creada en sesión Light Paradox** |
+| `UpdateRuneSlotVisibility` | **Nueva — creada en sesión Light Paradox (Lógica 3)** |
 
 ---
 
 ## UpdateEquipmentSlotItem (Función)
 
-Contiene un nodo **Select** que mapea cada tipo de slot a su widget correspondiente.
-Cada slot nuevo debe ser conectado a este Select al ser creado.
+**Inputs:** `Container`, `Slot` (Integer), `Item Data`
 
-Los slots `Equipment_HeadRuneSlot_1` al `Equipment_HeadRuneSlot_9` están conectados
-a los pins `HeadRuneWord_2` al `HeadRuneWord_10` del nodo Select.
+Contiene:
+- Variable local `Equipment Reference`
+- Nodo `==` que compara `Container` con `Equipment Reference`
+- `Branch` cuya `Condition` recibe el resultado del `==`
+- Nodo `Select` que mapea cada valor de `E_EquipmentSlot` a su widget correspondiente
+- `Update Item Data` al final del flujo `True`
+
+### Modificaciones agregadas en sesión Lógica 3
+
+Dentro del `Branch True` existente se insertó:
+
+```
+Branch True (existente) →
+  Item Is Valid (Item Data)
+    Is Valid     → [Select → Update Item Data] → Update Rune Slot Visibility
+                     (Slot Index: Slot, Item Assigned: True)
+    Is Not Valid → Update Rune Slot Visibility
+                     (Slot Index: Slot, Item Assigned: False)
+```
+
+> **Nota:** `Item Is Valid` es una función pura (sin pin Exec) que devuelve Boolean.
+> Se usa conectando su salida `Is Valid` al pin `Condition` de un `Branch` nuevo
+> insertado entre el `Branch` existente y el `Update Item Data` original.
 
 ### Cómo conectar un slot nuevo en esta función
 
@@ -139,30 +175,98 @@ a los pins `HeadRuneWord_2` al `HeadRuneWord_10` del nodo Select.
 5. Conectar ese nodo al pin correspondiente del `Select`
 6. Compilar y guardar
 
-> **Nota:** El nodo `Select` tiene un pin por cada tipo de slot de equipment.
-> Al agregar un valor nuevo a `E_EquipmentSlot`, Unreal agrega automáticamente el pin correspondiente al Select.
-> Si el pin no aparece, verificar que el enum esté compilado y guardado.
+> **Nota:** El nodo `Select` tiene un pin por cada valor de `E_EquipmentSlot`.
+> Al agregar un valor nuevo a `E_EquipmentSlot`, Unreal agrega automáticamente
+> el pin correspondiente al Select. Si el pin no aparece, verificar que el enum
+> esté compilado y guardado.
 
 ---
 
-## ShowRuneSlots (Función nueva)
-**Propósito:** Revelar el ScrollBox de equipment slots al abrir BP_Building_Altar.
+## UpdateRuneSlotVisibility (Función nueva — Lógica 3)
+
+**Propósito:** Revelar o colapsar el slot de runa siguiente en la cadena cuando
+un slot recibe o pierde un ítem.
+
+**Inputs:**
+- `Slot Index` (Integer) — Slot Number del slot que cambió
+- `Item Assigned` (Boolean) — True si recibió ítem, False si fue vaciado
+
+**Flujo implementado:**
+```
+Entry →
+  Select (Index: Slot Index) → Return Value (widget del slot siguiente)
+    → Is Valid →
+        Is Valid exec →
+          Branch (Condition: Item Assigned)
+            True  → Set Visibility (Target: widget siguiente, Visibility: Visible)
+            False → Set Visibility (Target: widget siguiente, Visibility: Collapsed)
+        Is Not Valid → [termina — era el último slot]
+```
+
+**Mapeo del Select (Option → Widget):**
+
+| Option | Widget destino | Slot Number destino |
+|---|---|---|
+| Option 0 | `Equipment_HeadRuneSlot_1` | 14 |
+| Option 1 | `Equipment_HeadRuneSlot_2` | 15 |
+| Option 2 | `Equipment_HeadRuneSlot_3` | 16 |
+| Option 3 | `Equipment_HeadRuneSlot_4` | 17 |
+| Option 4 | `Equipment_HeadRuneSlot_5` | 18 |
+| Option 5 | `Equipment_HeadRuneSlot_6` | 19 |
+| Option 6 | `Equipment_HeadRuneSlot_7` | 20 |
+| Option 7 | `Equipment_HeadRuneSlot_8` | 21 |
+| Option 8 | `Equipment_HeadRuneSlot_9` | 22 |
+
+> ⚠️ **PROBLEMA PENDIENTE — Lógica 3 incompleta:**
+> El nodo `Select` usa índices Integer secuenciales (Option 0, 1, 2... 8) pero
+> el input `Slot Index` contiene los **Slot Numbers reales** (7, 14, 15, 16...).
+> Esto causa desincronización: al asignar runa en slot 1 (Slot Number 7) el Select
+> recibe 7 y devuelve `Option 7` en lugar de `Option 0`.
+>
+> **Resultado observado:** El slot 2 se revela correctamente (por coincidencia el
+> Slot Number 7 apunta a Option 7 = `Equipment_HeadRuneSlot_8`), pero la cadena
+> se rompe en el slot 3 y los ítems quedan bloqueados.
+>
+> **Opciones de solución a evaluar:**
+> - **Opción A:** Reemplazar `Select` por uno de tipo enum `E_EquipmentSlot`
+> - **Opción B:** Reemplazar `Select` por `Switch on Int` con casos 7, 14, 15, 16, 17, 18, 19, 20, 21
+> - **Opción C:** Agregar nodo de remapeo Integer→Integer antes del `Select` (Map de Slot Number → Option Index)
+
+---
+
+## ShowRuneSlots (Función)
+**Propósito:** Revelar los contenedores de runa al abrir BP_Building_Altar.
 **Llamada desde:** BP_Building_Altar → On Opened (CraftingComponent) → cadena Cast → aquí.
 
 ```
 Entry →
-  Set Visibility (Target: ScrollBox_EquipmentSlots, Visibility: Visible)
+  Set Visibility (Target: Head Rune Box, Visibility: Visible)
+  Set Visibility (Target: Body Rune Box, Visibility: Visible)
+  Set Visibility (Target: Pants Rune Box, Visibility: Visible)
+  Set Visibility (Target: Hands Rune Box, Visibility: Visible)
+  Set Visibility (Target: Feet Rune Box, Visibility: Visible)
+  Set Visibility (Target: Backpack Rune Box, Visibility: Visible)
+  Set Visibility (Target: Tool Rune Box, Visibility: Visible)
 ```
+
+> **Nota:** `Equipment Scroll Box` fue removido de esta función. Los cosméticos
+> son siempre visibles.
 
 ---
 
-## HideRuneSlots (Función nueva)
-**Propósito:** Colapsar el ScrollBox de equipment slots al cerrar BP_Building_Altar.
+## HideRuneSlots (Función)
+**Propósito:** Colapsar los contenedores de runa al cerrar BP_Building_Altar.
 **Llamada desde:** BP_Building_Altar → On Closed (CraftingComponent) → cadena Cast → aquí.
 
 ```
 Entry →
-  Set Visibility (Target: ScrollBox_EquipmentSlots, Visibility: Collapsed)
+  Set Visibility (Target: Head Rune Box, Visibility: Collapsed)
+  Set Visibility (Target: Body Rune Box, Visibility: Collapsed)
+  Set Visibility (Target: Pants Rune Box, Visibility: Collapsed)
+  Set Visibility (Target: Hands Rune Box, Visibility: Collapsed)
+  Set Visibility (Target: Feet Rune Box, Visibility: Collapsed)
+  Set Visibility (Target: Backpack Rune Box, Visibility: Collapsed)
+  Set Visibility (Target: Tool Rune Box, Visibility: Collapsed)
 ```
 
 > **Regla aplicada:** Visibility: Collapsed (no Hidden) para cumplir Rule 1.5 de
@@ -200,9 +304,9 @@ Entry →
 - `UI_Character` no tiene referencia al `BP_Building_Altar` ni al `CraftingComponent`.
   El flujo de visibilidad es unidireccional: el Altar llama al HUD, el HUD llega al widget.
 - `ShowRuneSlots` y `HideRuneSlots` son las únicas funciones públicas que controlan
-  la visibilidad del ScrollBox. No existe otra ruta para mostrar u ocultar esa área.
-- El ScrollBox está `Collapsed` por defecto. Nunca se muestra en el arranque del juego
-  a menos que el jugador interactúe con `BP_Building_Altar`.
+  la visibilidad de los Rune Box. No existe otra ruta para mostrar u ocultar esa área.
+- Todos los Rune Box están `Collapsed` por defecto. Nunca se muestran en el arranque
+  del juego a menos que el jugador interactúe con `BP_Building_Altar`.
 - Los widgets de slot son referencias individuales, no un array. Cada slot nuevo requiere
   conexión manual en `Set Container Reference` y en `UpdateEquipmentSlotItem`.
 - Los nodos de `Set Container Reference` del EventGraph no están colapsados actualmente.
@@ -215,12 +319,12 @@ Entry →
 
 | Problema | Notas | Estado |
 |---|---|---|
-| Nombre exacto de ScrollBox_EquipmentSlots sin confirmar | Verificar en panel Hierarchy | Pendiente |
+| Select de UpdateRuneSlotVisibility desincronizado | Slot Numbers reales (7,14-21) no coinciden con Option indices (0-8). Ver opciones A/B/C en sección de la función. | **Pendiente — Lógica 3 incompleta** |
 | Flujo completo de Set Container Reference no documentado | Solo se documentó el punto de conexión del nuevo slot | Pendiente |
 | Nodos de Set Container Reference sin colapsar | Evaluar organización por grupo al completar todos los grupos de runas | Pendiente |
 
 ---
 
-*Archivo actualizado — sesión Light Paradox (HeadRuneWord slots múltiples)*
-*Cambios: tabla de slots HeadRuneWord confirmada (Equipment_HeadRuneSlot al _9, Slot Numbers 7 y 14-22), convención de nomenclatura para slots múltiples del mismo tipo, nota sobre UpdateEquipmentSlotItem y Set Container Reference actualizadas, deuda técnica de organización de nodos registrada*
+*Archivo actualizado — sesión Light Paradox (Lógica 3 — asignación de runas en orden)*
+*Cambios: tabla de slots HeadRuneWord actualizada con Visibility default, widgets adicionales confirmados (7 Rune Box + Equipment Scroll Box), ShowRuneSlots/HideRuneSlots actualizadas sin Equipment Scroll Box, función UpdateRuneSlotVisibility documentada con problema pendiente de Select, modificaciones en UpdateEquipmentSlotItem documentadas*
 *Project: Light Paradox · Base: EasySurvivalRPGv5*
