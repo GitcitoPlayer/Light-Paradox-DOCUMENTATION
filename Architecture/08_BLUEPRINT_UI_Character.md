@@ -30,22 +30,36 @@ No son un array dinámico — cada slot es un widget nombrado explícitamente.
 
 ```
 Equipment_[NombreSlot]Slot
+Equipment_[NombreSlot]Slot_1  (segundo slot del mismo tipo)
+Equipment_[NombreSlot]Slot_2  (tercer slot del mismo tipo)
+... y así sucesivamente
 ```
 
-Ejemplos:
-- `Equipment_BodySlot`
-- `Equipment_BodyRuneSlot`
+### Slots de Head Rune Word confirmados
+
+| Widget | Slot Number |
+|---|---|
+| `Equipment_HeadRuneSlot` | 7 |
+| `Equipment_HeadRuneSlot_1` | 14 |
+| `Equipment_HeadRuneSlot_2` | 15 |
+| `Equipment_HeadRuneSlot_3` | 16 |
+| `Equipment_HeadRuneSlot_4` | 17 |
+| `Equipment_HeadRuneSlot_5` | 18 |
+| `Equipment_HeadRuneSlot_6` | 19 |
+| `Equipment_HeadRuneSlot_7` | 20 |
+| `Equipment_HeadRuneSlot_8` | 21 |
+| `Equipment_HeadRuneSlot_9` | 22 |
+
+> **Nota de nomenclatura:** El slot original no tiene sufijo numérico. Los duplicados comienzan en `_1` hasta `_9`. Esta convención debe mantenerse para los grupos de Body, Pants, Hands, Feet, Backpack y Tool cuando se creen.
 
 ### Cómo agregar un widget de slot nuevo
 
 1. Abrir `UI_Character` en modo **Designer**
-2. En el panel **Hierarchy**, localizar el widget del slot más similar al nuevo (ejemplo: `Equipment_BodySlot` para un RuneWord de Body)
+2. En el panel **Hierarchy**, localizar el widget del slot más similar al nuevo
 3. Duplicar ese widget
-4. Renombrar el duplicado siguiendo la convención: `Equipment_[NombreSlot]Slot`
+4. Renombrar el duplicado siguiendo la convención: `Equipment_[NombreSlot]Slot_[N]`
 5. Asignar el `Slot Number` al índice numérico correspondiente (debe coincidir con el índice en `Equipment Slots` de `BP_Character_Player`)
-
-> **Nota:** El nombre exacto de los widgets de slots existentes no fue documentado en detalle.
-> Al trabajar con un slot nuevo, verificar el nombre exacto del widget a duplicar en el panel Hierarchy.
+6. Verificar que **Is Variable** esté activado en el panel Details
 
 ---
 
@@ -80,13 +94,14 @@ Event Construct →
 En el EventGraph de `UI_Character` existe lógica conectada al nodo `Set Container Reference`
 que asigna la referencia de contenedor a cada widget de slot individual.
 
-Al agregar un slot nuevo:
-1. En el EventGraph, localizar el nodo `Set Container Reference`
-2. Agregar un nodo `Get [NombreWidget]` para el nuevo slot (ejemplo: `Get Equipment Body Rune Slot`)
-3. Conectar ese nodo al pin `Target` de `Set Container Reference`
+Los slots `Equipment_HeadRuneSlot_1` al `Equipment_HeadRuneSlot_9` están conectados
+en cadena Exec dentro de esta lógica.
 
-> **Nota:** El flujo completo de `Set Container Reference` en el EventGraph no fue documentado en detalle.
-> Se documenta el punto de conexión confirmado durante la sesión de creación de slots.
+Al agregar slots nuevos de otro grupo (Body, Pants, etc.):
+1. En el EventGraph, localizar el nodo `Set Container Reference`
+2. Agregar un nodo `Get [NombreWidget]` para cada slot nuevo
+3. Conectar ese nodo al pin `Target` de `Set Container Reference`
+4. Conectar en cadena Exec después del último slot existente
 
 ---
 
@@ -112,13 +127,16 @@ Al agregar un slot nuevo:
 Contiene un nodo **Select** que mapea cada tipo de slot a su widget correspondiente.
 Cada slot nuevo debe ser conectado a este Select al ser creado.
 
+Los slots `Equipment_HeadRuneSlot_1` al `Equipment_HeadRuneSlot_9` están conectados
+a los pins `HeadRuneWord_2` al `HeadRuneWord_10` del nodo Select.
+
 ### Cómo conectar un slot nuevo en esta función
 
 1. Abrir `UI_Character` en modo **Graph**
 2. Entrar a la función `UpdateEquipmentSlotItem`
 3. Localizar el nodo `Select`
-4. Agregar un nodo `Get [NombreWidget]` para el nuevo slot (ejemplo: `Get Equipment Body Rune Slot`)
-5. Conectar ese nodo al pin correspondiente del `Select` (el pin debe tener el nombre del slot, ejemplo: `Body Rune Word`)
+4. Agregar un nodo `Get [NombreWidget]` para el nuevo slot
+5. Conectar ese nodo al pin correspondiente del `Select`
 6. Compilar y guardar
 
 > **Nota:** El nodo `Select` tiene un pin por cada tipo de slot de equipment.
@@ -154,18 +172,18 @@ Entry →
 
 ## Flujo completo para agregar un slot nuevo en UI_Character
 
-Este flujo resume los Pasos 9 y 10 del instructivo de creación de slots:
-
 ```
 1. Modo Designer
    → Duplicar widget de slot existente en el Hierarchy
-   → Renombrar: Equipment_[NombreSlot]Slot
+   → Renombrar siguiendo convención: Equipment_[NombreSlot]Slot_[N]
    → Asignar Slot Number correcto
+   → Verificar Is Variable activado
 
 2. Modo Graph → EventGraph
    → Localizar Set Container Reference
    → Agregar Get [NombreWidget]
    → Conectar al pin Target
+   → Conectar en cadena Exec
 
 3. Modo Graph → UpdateEquipmentSlotItem
    → Localizar nodo Select
@@ -187,6 +205,9 @@ Este flujo resume los Pasos 9 y 10 del instructivo de creación de slots:
   a menos que el jugador interactúe con `BP_Building_Altar`.
 - Los widgets de slot son referencias individuales, no un array. Cada slot nuevo requiere
   conexión manual en `Set Container Reference` y en `UpdateEquipmentSlotItem`.
+- Los nodos de `Set Container Reference` del EventGraph no están colapsados actualmente.
+  Pendiente evaluar organización con Collapse to Function o Comment Box por grupo cuando
+  se completen los grupos de Body, Pants, Hands, Feet, Backpack y Tool.
 
 ---
 
@@ -196,9 +217,10 @@ Este flujo resume los Pasos 9 y 10 del instructivo de creación de slots:
 |---|---|---|
 | Nombre exacto de ScrollBox_EquipmentSlots sin confirmar | Verificar en panel Hierarchy | Pendiente |
 | Flujo completo de Set Container Reference no documentado | Solo se documentó el punto de conexión del nuevo slot | Pendiente |
+| Nodos de Set Container Reference sin colapsar | Evaluar organización por grupo al completar todos los grupos de runas | Pendiente |
 
 ---
 
-*Archivo actualizado — sesión Light Paradox*
-*Cambios: sistema completo de widgets de slot documentado, convención de nomenclatura confirmada, flujo Designer + Graph para slots nuevos, UpdateEquipmentSlotItem documentada, deuda técnica registrada*
+*Archivo actualizado — sesión Light Paradox (HeadRuneWord slots múltiples)*
+*Cambios: tabla de slots HeadRuneWord confirmada (Equipment_HeadRuneSlot al _9, Slot Numbers 7 y 14-22), convención de nomenclatura para slots múltiples del mismo tipo, nota sobre UpdateEquipmentSlotItem y Set Container Reference actualizadas, deuda técnica de organización de nodos registrada*
 *Project: Light Paradox · Base: EasySurvivalRPGv5*

@@ -42,19 +42,27 @@ El orden de los valores determina el índice — **nunca reordenar valores exist
 | 8 | BodyRuneWord |
 | 9 | PantsRuneWord |
 | 10 | HandsRuneWord |
-| 11 | BackpackRuneWord |
-| 12 | ToolRuneWord |
-| 13 | Hello |
+| 11 | FeetRuneWord |
+| 12 | BackpackRuneWord |
+| 13 | ToolRuneWord |
+| 14 | HeadRuneWord_2 |
+| 15 | HeadRuneWord_3 |
+| 16 | HeadRuneWord_4 |
+| 17 | HeadRuneWord_5 |
+| 18 | HeadRuneWord_6 |
+| 19 | HeadRuneWord_7 |
+| 20 | HeadRuneWord_8 |
+| 21 | HeadRuneWord_9 |
+| 22 | HeadRuneWord_10 |
 
-> **Nota:** El valor `Hello` (índice 13) es un valor de prueba. No tiene slot funcional asignado.
+> **Nota:** El valor `Hello` que existía en índice 13 fue renombrado a `HeadRuneWord_2` durante la sesión de creación de slots de runas múltiples.
 
 ### E_EquipmentType
 Enum separado de `E_EquipmentSlot`. Confirmado como asset independiente a partir de inspección directa.
 Contiene los mismos Display Names que `E_EquipmentSlot` — se mantiene sincronizado manualmente al agregar slots nuevos.
 El orden de los valores determina el índice — **nunca reordenar valores existentes**.
 
-> **Nota:** El contenido completo de `E_EquipmentType` no fue inspeccionado en detalle.
-> Se infiere que contiene al menos los mismos valores que `E_EquipmentSlot` para los slots funcionales confirmados.
+> **Nota:** `E_EquipmentType` contiene los mismos valores que `E_EquipmentSlot` incluyendo `HeadRuneWord_2` al `HeadRuneWord_10` agregados en la misma sesión.
 
 ---
 
@@ -101,8 +109,9 @@ Al agregar un valor nuevo a `E_EquipmentSlot` o `E_EquipmentType`:
 | EasyRPG.Items.Equipment.BodyRuneWord | BodyRuneWord |
 | EasyRPG.Items.Equipment.PantsRuneWord | PantsRuneWord |
 
-> **Nota:** Al momento de la última sesión solo se confirmaron 9-10 entradas.
-> Los tags HandsRuneWord, BackpackRuneWord, ToolRuneWord deben agregarse siguiendo el mismo patrón si sus slots están activos.
+> **Nota:** Los slots `HeadRuneWord_2` al `HeadRuneWord_10` no requieren entradas nuevas en este Map. Todos comparten el tag `EasyRPG.Items.Equipment.HeadRuneWord` y la entrada existente los cubre. Lo mismo aplicará para los grupos de runas de Body, Pants, Hands, Feet, Backpack y Tool cuando se creen.
+
+> **Nota pendiente:** Los tags HandsRuneWord, BackpackRuneWord, ToolRuneWord deben agregarse siguiendo el mismo patrón si sus slots están activos.
 
 #### Flujo de la función:
 
@@ -180,6 +189,6 @@ Entry (Slot: Integer, Item: STR_ItemData)
 
 ---
 
-*Archivo actualizado — sesión Light Paradox*
-*Cambios: E_EquipmentType documentado, regla de orden de enumeradores, PantsRuneWord agregado a Local Equipment Types, nota sobre BP_ItemsLibrary*
+*Archivo actualizado — sesión Light Paradox (HeadRuneWord slots múltiples)*
+*Cambios: E_EquipmentSlot e E_EquipmentType actualizados con índices 14-22 (HeadRuneWord_2 al HeadRuneWord_10), nota Hello eliminada, nota sobre Local Equipment Types Map para slots múltiples del mismo tipo*
 *Project: Light Paradox · Base: EasySurvivalRPGv5*
