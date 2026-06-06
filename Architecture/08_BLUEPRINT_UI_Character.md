@@ -203,34 +203,34 @@ Entry →
         Is Not Valid → [termina — era el último slot]
 ```
 
-**Mapeo del Select (Option → Widget):**
+**Implementación final — Select por enum `E_EquipmentSlot` dentro de CollapseGraph:**
 
-| Option | Widget destino | Slot Number destino |
+El `Select` original de tipo Integer fue reemplazado por un `Select` de tipo enum
+colapsado en un `CollapseGraph` para organización. El `Index` recibe `Slot Index`
+y los pins del enum mapean directamente los Slot Numbers correctos:
+
+| Pin del enum | Widget conectado | Slot Number |
 |---|---|---|
-| Option 0 | `Equipment_HeadRuneSlot_1` | 14 |
-| Option 1 | `Equipment_HeadRuneSlot_2` | 15 |
-| Option 2 | `Equipment_HeadRuneSlot_3` | 16 |
-| Option 3 | `Equipment_HeadRuneSlot_4` | 17 |
-| Option 4 | `Equipment_HeadRuneSlot_5` | 18 |
-| Option 5 | `Equipment_HeadRuneSlot_6` | 19 |
-| Option 6 | `Equipment_HeadRuneSlot_7` | 20 |
-| Option 7 | `Equipment_HeadRuneSlot_8` | 21 |
-| Option 8 | `Equipment_HeadRuneSlot_9` | 22 |
+| `Head Rune Word` | `Equipment_HeadRuneSlot_1` | 14 |
+| `Head Rune Word 2` | `Equipment_HeadRuneSlot_2` | 15 |
+| `Head Rune Word 3` | `Equipment_HeadRuneSlot_3` | 16 |
+| `Head Rune Word 4` | `Equipment_HeadRuneSlot_4` | 17 |
+| `Head Rune Word 5` | `Equipment_HeadRuneSlot_5` | 18 |
+| `Head Rune Word 6` | `Equipment_HeadRuneSlot_6` | 19 |
+| `Head Rune Word 7` | `Equipment_HeadRuneSlot_7` | 20 |
+| `Head Rune Word 8` | `Equipment_HeadRuneSlot_8` | 21 |
+| `Head Rune Word 9` | `Equipment_HeadRuneSlot_9` | 22 |
+| Todos los demás pins | sin conectar — `Is Valid` los filtra | — |
 
-> ⚠️ **PROBLEMA PENDIENTE — Lógica 3 incompleta:**
-> El nodo `Select` usa índices Integer secuenciales (Option 0, 1, 2... 8) pero
-> el input `Slot Index` contiene los **Slot Numbers reales** (7, 14, 15, 16...).
-> Esto causa desincronización: al asignar runa en slot 1 (Slot Number 7) el Select
-> recibe 7 y devuelve `Option 7` en lugar de `Option 0`.
->
-> **Resultado observado:** El slot 2 se revela correctamente (por coincidencia el
-> Slot Number 7 apunta a Option 7 = `Equipment_HeadRuneSlot_8`), pero la cadena
-> se rompe en el slot 3 y los ítems quedan bloqueados.
->
-> **Opciones de solución a evaluar:**
-> - **Opción A:** Reemplazar `Select` por uno de tipo enum `E_EquipmentSlot`
-> - **Opción B:** Reemplazar `Select` por `Switch on Int` con casos 7, 14, 15, 16, 17, 18, 19, 20, 21
-> - **Opción C:** Agregar nodo de remapeo Integer→Integer antes del `Select` (Map de Slot Number → Option Index)
+> **Nota de diseño:** El pin `Head Rune Word` (Slot Number 7, el primer slot)
+> revela al slot siguiente (`Equipment_HeadRuneSlot_1`), no a sí mismo.
+> El último slot (`Head Rune Word 10`, Slot Number 22) no tiene widget destino —
+> el nodo `Is Valid` absorbe el None sin error.
+
+> **✅ Lógica 3 — COMPLETADA Y VERIFICADA EN PLAY:**
+> - Asignar runa en slot N → slot N+1 se revela (`Visible`)
+> - Quitar runa del slot N → slot N+1 se colapsa (`Collapsed`)
+> - La cadena funciona correctamente de slot 1 a slot 10
 
 ---
 
@@ -319,12 +319,12 @@ Entry →
 
 | Problema | Notas | Estado |
 |---|---|---|
-| Select de UpdateRuneSlotVisibility desincronizado | Slot Numbers reales (7,14-21) no coinciden con Option indices (0-8). Ver opciones A/B/C en sección de la función. | **Pendiente — Lógica 3 incompleta** |
+| Select de UpdateRuneSlotVisibility | Resuelto usando Select por enum E_EquipmentSlot dentro de CollapseGraph. Slot Numbers del enum mapean correctamente a cada widget destino. | **Resuelto** |
 | Flujo completo de Set Container Reference no documentado | Solo se documentó el punto de conexión del nuevo slot | Pendiente |
 | Nodos de Set Container Reference sin colapsar | Evaluar organización por grupo al completar todos los grupos de runas | Pendiente |
 
 ---
 
-*Archivo actualizado — sesión Light Paradox (Lógica 3 — asignación de runas en orden)*
-*Cambios: tabla de slots HeadRuneWord actualizada con Visibility default, widgets adicionales confirmados (7 Rune Box + Equipment Scroll Box), ShowRuneSlots/HideRuneSlots actualizadas sin Equipment Scroll Box, función UpdateRuneSlotVisibility documentada con problema pendiente de Select, modificaciones en UpdateEquipmentSlotItem documentadas*
+*Archivo actualizado — sesión Light Paradox (Lógica 3 — COMPLETADA)*
+*Cambios: UpdateRuneSlotVisibility actualizada con implementación final por enum, Select Integer reemplazado por Select enum dentro de CollapseGraph, deuda técnica de Select marcada como resuelta, Lógica 3 verificada en Play*
 *Project: Light Paradox · Base: EasySurvivalRPGv5*
