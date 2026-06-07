@@ -39,7 +39,7 @@ Equipment_[NombreSlot]Slot_2  (tercer slot del mismo tipo)
 
 | Widget | Slot Number | Visibility default |
 |---|---|---|
-| `Equipment_HeadRuneSlot` | 7 | Visible / Not Hit-Testable |
+| `Equipment_HeadRuneSlot` | 7 | Collapsed |
 | `Equipment_HeadRuneSlot_1` | 14 | Collapsed |
 | `Equipment_HeadRuneSlot_2` | 15 | Collapsed |
 | `Equipment_HeadRuneSlot_3` | 16 | Collapsed |
@@ -50,10 +50,11 @@ Equipment_[NombreSlot]Slot_2  (tercer slot del mismo tipo)
 | `Equipment_HeadRuneSlot_8` | 21 | Collapsed |
 | `Equipment_HeadRuneSlot_9` | 22 | Collapsed |
 
-> **Nota de Lógica 3:** Los slots 2-10 (`Equipment_HeadRuneSlot_1` al `_9`) fueron
-> cambiados a `Collapsed` en el Designer como parte de la implementación de la
-> Lógica 3 (asignación de runas en orden). Solo `Equipment_HeadRuneSlot` (Slot 7)
-> arranca visible al abrir el Altar.
+> **Nota de Lógica 2 y 3:** Todos los slots de runa arrancan `Collapsed` en el Designer.
+> `Equipment_HeadRuneSlot` (Slot 7) fue cambiado de `Visible` a `Collapsed` como parte
+> de la Lógica 2 — su visibilidad ahora está condicionada a que el slot cosmético Head
+> (índice 0) tenga un ítem asignado. El pin `Head` del CollapseGraph en
+> `UpdateRuneSlotVisibility` controla su aparición.
 
 > **Nota de nomenclatura:** El slot original no tiene sufijo numérico. Los duplicados
 > comienzan en `_1` hasta `_9`. Esta convención debe mantenerse para los grupos de
@@ -209,28 +210,38 @@ El `Select` original de tipo Integer fue reemplazado por un `Select` de tipo enu
 colapsado en un `CollapseGraph` para organización. El `Index` recibe `Slot Index`
 y los pins del enum mapean directamente los Slot Numbers correctos:
 
-| Pin del enum | Widget conectado | Slot Number |
-|---|---|---|
-| `Head Rune Word` | `Equipment_HeadRuneSlot_1` | 14 |
-| `Head Rune Word 2` | `Equipment_HeadRuneSlot_2` | 15 |
-| `Head Rune Word 3` | `Equipment_HeadRuneSlot_3` | 16 |
-| `Head Rune Word 4` | `Equipment_HeadRuneSlot_4` | 17 |
-| `Head Rune Word 5` | `Equipment_HeadRuneSlot_5` | 18 |
-| `Head Rune Word 6` | `Equipment_HeadRuneSlot_6` | 19 |
-| `Head Rune Word 7` | `Equipment_HeadRuneSlot_7` | 20 |
-| `Head Rune Word 8` | `Equipment_HeadRuneSlot_8` | 21 |
-| `Head Rune Word 9` | `Equipment_HeadRuneSlot_9` | 22 |
-| Todos los demás pins | sin conectar — `Is Valid` los filtra | — |
+| Pin del enum | Widget conectado | Slot Number | Lógica |
+|---|---|---|---|
+| `Head` | `Equipment_HeadRuneSlot` | 7 | Lógica 2 — cosmético Head desbloquea primer slot de runa |
+| `Head Rune Word` | `Equipment_HeadRuneSlot_1` | 14 | Lógica 3 — cadena de runas |
+| `Head Rune Word 2` | `Equipment_HeadRuneSlot_2` | 15 | Lógica 3 |
+| `Head Rune Word 3` | `Equipment_HeadRuneSlot_3` | 16 | Lógica 3 |
+| `Head Rune Word 4` | `Equipment_HeadRuneSlot_4` | 17 | Lógica 3 |
+| `Head Rune Word 5` | `Equipment_HeadRuneSlot_5` | 18 | Lógica 3 |
+| `Head Rune Word 6` | `Equipment_HeadRuneSlot_6` | 19 | Lógica 3 |
+| `Head Rune Word 7` | `Equipment_HeadRuneSlot_7` | 20 | Lógica 3 |
+| `Head Rune Word 8` | `Equipment_HeadRuneSlot_8` | 21 | Lógica 3 |
+| `Head Rune Word 9` | `Equipment_HeadRuneSlot_9` | 22 | Lógica 3 |
+| Todos los demás pins | sin conectar — `Is Valid` los filtra | — | — |
 
-> **Nota de diseño:** El pin `Head Rune Word` (Slot Number 7, el primer slot)
-> revela al slot siguiente (`Equipment_HeadRuneSlot_1`), no a sí mismo.
-> El último slot (`Head Rune Word 10`, Slot Number 22) no tiene widget destino —
-> el nodo `Is Valid` absorbe el None sin error.
+> **Mapeo cosmético → runa confirmado:**
+> - `Head` (índice 0 en EquipmentSlots) → desbloquea `Equipment_HeadRuneSlot` (Slot 7)
+> - `Body` (índice 1) → pendiente de implementar
+> - `Pants` (índice 2) → pendiente
+> - `Hands` (índice 3) → pendiente
+> - `Feet` (índice 4) → pendiente
+> - `Backpack` (índice 5) → pendiente
+> - `Tool` (índice 6) → pendiente
+
+> **✅ Lógica 2 — COMPLETADA:**
+> Asignar cosmético en Head → `Equipment_HeadRuneSlot` se revela (`Visible`).
+> Quitar cosmético de Head → `Equipment_HeadRuneSlot` se colapsa (`Collapsed`).
+> Implementado reutilizando `UpdateRuneSlotVisibility` — pin `Head` del CollapseGraph.
 
 > **✅ Lógica 3 — COMPLETADA Y VERIFICADA EN PLAY:**
-> - Asignar runa en slot N → slot N+1 se revela (`Visible`)
-> - Quitar runa del slot N → slot N+1 se colapsa (`Collapsed`)
-> - La cadena funciona correctamente de slot 1 a slot 10
+> Asignar runa en slot N → slot N+1 se revela (`Visible`).
+> Quitar runa del slot N → slot N+1 se colapsa (`Collapsed`).
+> La cadena funciona correctamente de slot 1 a slot 10.
 
 ---
 
@@ -319,12 +330,44 @@ Entry →
 
 | Problema | Notas | Estado |
 |---|---|---|
-| Select de UpdateRuneSlotVisibility | Resuelto usando Select por enum E_EquipmentSlot dentro de CollapseGraph. Slot Numbers del enum mapean correctamente a cada widget destino. | **Resuelto** |
+| Select de UpdateRuneSlotVisibility | Resuelto usando Select por enum E_EquipmentSlot dentro de CollapseGraph. | **Resuelto** |
 | Flujo completo de Set Container Reference no documentado | Solo se documentó el punto de conexión del nuevo slot | Pendiente |
 | Nodos de Set Container Reference sin colapsar | Evaluar organización por grupo al completar todos los grupos de runas | Pendiente |
+| Bug — Quitar cosmético de Head colapsa solo un slot de runa aunque haya varios asignados | Al quitar el hat con 3 runas asignadas, visualmente solo se colapsa 1 slot. La cadena de runas queda en estado inconsistente. Pendiente de resolución conjunta con la decisión de diseño de orden de remoción (ver abajo). | **Bug abierto** |
+| Bug — Quitar runas en orden incorrecto rompe la cadena de visibilidad | Si el jugador quita una runa de un slot intermedio, los slots posteriores se colapsan aunque aún tengan runa. Dos opciones de solución propuestas (ver abajo). | **Bug abierto — decisión de cliente pendiente** |
 
 ---
 
-*Archivo actualizado — sesión Light Paradox (Lógica 3 — COMPLETADA)*
-*Cambios: UpdateRuneSlotVisibility actualizada con implementación final por enum, Select Integer reemplazado por Select enum dentro de CollapseGraph, deuda técnica de Select marcada como resuelta, Lógica 3 verificada en Play*
+## Decisiones de diseño pendientes
+
+### Orden de remoción de runas
+
+El sistema actual fuerza colocación ascendente pero no valida el orden de remoción.
+Se propusieron dos opciones al cliente:
+
+**Opción A — No forzar orden al quitar (quitar en cualquier orden)**
+- El jugador puede quitar cualquier runa independientemente de su posición
+- Requiere lógica nueva: función que cuente slots ocupados y recalcule visibilidad global de todos los slots en cada cambio
+- No tiene base en arquitectura actual — requiere documentar acceso a `EquipmentContainer` desde `UI_Character`
+- Mayor libertad para el jugador
+
+**Opción B — Bloquear runas anteriores (forzar orden descendente al quitar)**
+- El jugador solo puede quitar la última runa asignada — las anteriores están bloqueadas
+- Reutiliza `IsBlocked` en `UI_ItemSlot` que ya existe y ya es evaluado en `OnDragDetected`
+- Se engancha en `UpdateRuneSlotVisibility` que ya existe
+- Más sencilla de implementar — modificación mínima
+- Menor libertad pero garantiza integridad de la cadena
+
+**Diseño tentativo relacionado — Configuración rúnica por ítem:**
+Al resolver la Lógica 5 (armas y herramientas con runas propias), se evaluará si
+cada ítem cosmético guarda su propia configuración rúnica. Si es así, quitar y
+reequipar un cosmético debería restaurar sus runas previas — lo que podría resolver
+el bug de colapso al quitar el cosmético de forma natural.
+
+*Decisión final pendiente de aprobación del cliente.*
+
+---
+
+*Archivo actualizado — sesión Light Paradox (Lógica 2 y 3 completadas — bugs y decisiones de diseño registrados)*
+*Cambios: Lógica 2 completada (cosmético Head desbloquea primer slot de runa via pin Head en CollapseGraph), Equipment_HeadRuneSlot visibility default actualizado a Collapsed, tabla de mapeo CollapseGraph actualizada con columna Lógica, bugs de remoción registrados, decisiones de diseño pendientes documentadas con Opción A y B*
 *Project: Light Paradox · Base: EasySurvivalRPGv5*
