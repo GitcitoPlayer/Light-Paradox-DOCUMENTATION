@@ -8,9 +8,26 @@
 ## Contexto
 
 `UI_CraftingQueue` es el widget que contiene y gestiona los slots visuales de la
-cola de crafteo. Vive dentro de `UI_HUD` como widget hijo.
-Contiene un panel `CraftingQueueBox` donde se instancian los widgets `UI_QueueBlueprint`
-dinámicamente al actualizar la queue.
+cola de crafteo y de asignación de runas. Vive dentro de `UI_HUD` como widget hijo.
+Contiene `CraftingQueueBox` para crafteo y `RuneQueueBox` para runas — ambos
+paneles son independientes.
+
+El label del widget fue cambiado de "Crafting Queue" a "Action Queue" para
+reflejar que contiene múltiples tipos de acciones con tiempo.
+
+---
+
+## Hierarchy confirmado
+
+```
+[UI_CraftingQueue]
+  └── CraftingQueueSizeBox
+        └── [Border]
+              └── [Vertical Box]
+                    ├── [Text] "Action Queue"
+                    ├── CraftingQueueBox   ← crafteo
+                    └── RuneQueueBox       ← runas
+```
 
 ---
 
@@ -18,8 +35,14 @@ dinámicamente al actualizar la queue.
 
 | Variable | Tipo | Notas |
 |---|---|---|
-| `CraftingQueueBox` | Panel Widget | Contenedor donde se agregan los UI_QueueBlueprint instanciados |
-| `QueueBlueprintWidgets` | Array de UI_QueueBlueprint | Referencias a los widgets instanciados en CraftingQueueBox |
+| `CraftingQueueBox` | Panel Widget | Contenedor de UI_QueueBlueprint. Gestionado por UpdateCraftingQueue |
+| `RuneQueueBox` | Panel Widget | Contenedor de UI_RuneAssignQueue. Gestionado por AddRuneToQueue |
+| `QueueBlueprintWidgets` | Array de UI_QueueBlueprint | Referencias a widgets de crafteo instanciados |
+| `RuneQueueWidgets` | Array de UI_RuneAssignQueue | Referencias a widgets de runa instanciados |
+| `PendingTargetContainer` | BP_ContainerComponent (Object Reference) | Contenedor destino pendiente de asignación |
+| `PendingTargetSlot` | Integer | Slot destino pendiente |
+| `PendingSourceContainer` | BP_ContainerComponent (Object Reference) | Contenedor origen pendiente |
+| `PendingSourceSlot` | Integer | Slot origen pendiente |
 
 ---
 
@@ -27,6 +50,7 @@ dinámicamente al actualizar la queue.
 
 ### UpdateCraftingQueue
 **Tooltip:** "Update crafting queue."
+Rebuild completo de `CraftingQueueBox`. No toca `RuneQueueBox`.
 
 **Inputs:** `Queue Blueprints` (Array de STR_QueueBlueprint)
 
@@ -37,33 +61,75 @@ Entry (Queue Blueprints) →
   CLEAR QueueBlueprintWidgets →
   For Each Loop (Array: Queue Blueprints)
     Loop Body →
-      Create UI Queue Blueprint Widget
-        (Class: UI_QueueBlueprint,
-         Owning Player: ...,
-         Queue Blueprint: Array Element,
-         Size: X=100, Y=100) →
-      Add Child (Target: CraftingQueueBox, Content: Return Value) →
-      ADD Return Value → QueueBlueprintWidgets
+      Create UI Queue Blueprint Widget (100x100) →
+      Add Child (Target: CraftingQueueBox) →
+      ADD → QueueBlueprintWidgets
     Completed → [termina]
 ```
 
-> **Patrón:** Rebuild completo — no actualiza slots individuales, destruye todos
-> y los recrea en cada llamada. Se llama cuando la queue cambia de tamaño.
-
 ### UpdateCraftingQueueBlueprint
 **Tooltip:** "Update crafting queue blueprint by index."
+Actualiza slot individual de crafteo por índice. No toca `RuneQueueBox`.
 
 **Inputs:** `Index` (Integer), `Queue Blueprint` (STR_QueueBlueprint)
 
+### AddRuneToQueue — flujo implementado
+
+**Inputs:**
+
+| Nombre | Tipo |
+|---|---|
+| `RuneIcon` | Texture2D (Object Reference) |
+| `AssignDuration` | Float |
+| `TargetContainer` | BP_ContainerComponent (Object Reference) |
+| `TargetSlot` | Integer |
+| `SourceContainer` | BP_ContainerComponent (Object Reference) |
+| `SourceSlot` | Integer |
+
 **Flujo:**
+
 ```
-Entry (Index, Queue Blueprint) →
-  GET QueueBlueprintWidgets[Index] →
-  Update Blueprint (Target: widget obtenido, Queue Blueprint: Queue Blueprint)
+Entry →
+  SET PendingTargetContainer ← TargetContainer
+  SET PendingTargetSlot ← TargetSlot
+  SET PendingSourceContainer ← SourceContainer
+  SET PendingSourceSlot ← SourceSlot
+  → Create Widget (Class: UI_RuneAssignQueue)
+  → Init Rune Assign Queue (todos los inputs)
+  → Add Child (Target: RuneQueueBox, Content: Return Value)
+  → ADD Return Value → RuneQueueWidgets
+  → Set Timer by Event
+      Time: AssignDuration
+      Looping: False
+      Event: Create Event → OnRuneAssignComplete
 ```
 
-> **Propósito:** Actualizar un slot individual sin reconstruir toda la queue.
-> Llamado por `BP_CraftingComponent` en cada tick para actualizar `Time Remaining`.
+---
+
+## Event Graph — Custom Events
+
+### OnRuneAssignComplete
+**Firma:** sin parámetros — requerido por Set Timer by Event.
+**Estado:** ⏳ Pendiente de implementar.
+
+**Flujo planificado:**
+```
+OnRuneAssignComplete →
+  Try Move Item To Container Slot BPI
+    Target: Get Owning Player
+    From Container: GET PendingSourceContainer
+    From Slot: GET PendingSourceSlot
+    To Container: GET PendingTargetContainer
+    To Slot: GET PendingTargetSlot
+    Amount: -1
+  → GET RuneQueueWidgets[0]
+  → Remove From Parent
+  → RuneQueueWidgets → Remove Index (0)
+```
+
+> **Nota:** Index 0 es temporal. Cuando haya múltiples runas en queue
+> simultáneamente necesitará lógica para identificar cuál widget
+> corresponde al timer que disparó.
 
 ---
 
@@ -73,19 +139,36 @@ Entry (Index, Queue Blueprint) →
 - `UpdateCraftingQueue_BPI` → delega a `UpdateCraftingQueue`
 - `UpdateCraftingQueueBlueprint_BPI` → delega a `UpdateCraftingQueueBlueprint`
 
-Sigue el patrón estándar BPI → función interna documentado en `11_BLUEPRINT_UI_HUD.md`.
+`AddRuneToQueue` será llamada desde `UI_ItemSlot` → `OnDrop` cuando el ítem
+dropeado sea una runa. Pendiente de implementar la intercepción.
 
 ---
 
 ## Notas de arquitectura
 
-- El sistema de rebuild completo en `UpdateCraftingQueue` significa que los widgets
-  se destruyen y recrean cada vez que un ítem entra o sale de la queue.
-- `UpdateCraftingQueueBlueprint` es el canal de actualización por tick —
-  más eficiente que rebuild completo para actualizar solo el tiempo restante.
-- Este widget no tiene lógica de timer propio — el timer vive en `BP_CraftingComponent`.
+- `CraftingQueueBox` y `RuneQueueBox` son paneles independientes.
+  El rebuild de crafteo nunca afecta los widgets de runa.
+- El timer vive en `UI_CraftingQueue` vía `Set Timer by Event`.
+  `UI_RuneAssignQueue` no tiene timer propio.
+- `Set Timer by Event` no puede pasar parámetros al evento.
+  Los datos pendientes se guardan en variables de instancia
+  (`PendingTargetContainer`, etc.) antes de arrancar el timer.
+- `StartRuneTimer` fue evaluado y descartado — el timer vive directamente
+  en `AddRuneToQueue`, más limpio.
 
 ---
 
-*Archivo creado — sesión Light Paradox (Lógica 1 — análisis de factibilidad Cooldown)*
+## Deuda técnica registrada
+
+| Problema | Notas | Estado |
+|---|---|---|
+| OnRuneAssignComplete sin implementar | Flujo planificado documentado arriba | ⏳ Pendiente |
+| Index 0 hardcodeado en OnRuneAssignComplete | Necesita lógica dinámica para queue múltiple | Pendiente — post Lógica 1 |
+| Interceptar OnDrop en UI_ItemSlot | Punto de entrada del cooldown desde el drag | ⏳ Pendiente |
+| Bind_Time_Text en UI_RuneAssignQueue | Countdown visual pendiente | ⏳ Pendiente |
+| BtnCancel en UI_RuneAssignQueue | Cancelar timer y devolver runa | ⏳ Pendiente |
+
+---
+
+*Archivo actualizado — sesión Light Paradox (Lógica 1 — AddRuneToQueue implementado, OnRuneAssignComplete pendiente)*
 *Project: Light Paradox · Base: EasySurvivalRPGv5*
