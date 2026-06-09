@@ -73,7 +73,7 @@ Actualiza slot individual de crafteo por índice. No toca `RuneQueueBox`.
 
 **Inputs:** `Index` (Integer), `Queue Blueprint` (STR_QueueBlueprint)
 
-### AddRuneToQueue — flujo implementado
+### AddRuneToQueue — flujo implementado ✅
 
 **Inputs:**
 
@@ -108,11 +108,11 @@ Entry →
 
 ## Event Graph — Custom Events
 
-### OnRuneAssignComplete
+### OnRuneAssignComplete ✅
 **Firma:** sin parámetros — requerido por Set Timer by Event.
-**Estado:** ⏳ Pendiente de implementar.
+**Estado:** Implementado.
 
-**Flujo planificado:**
+**Flujo:**
 ```
 OnRuneAssignComplete →
   Try Move Item To Container Slot BPI
@@ -122,8 +122,7 @@ OnRuneAssignComplete →
     To Container: GET PendingTargetContainer
     To Slot: GET PendingTargetSlot
     Amount: -1
-  → GET RuneQueueWidgets[0]
-  → Remove From Parent
+  → GET RuneQueueWidgets → Get [0] → Remove From Parent
   → RuneQueueWidgets → Remove Index (0)
 ```
 
@@ -139,8 +138,38 @@ OnRuneAssignComplete →
 - `UpdateCraftingQueue_BPI` → delega a `UpdateCraftingQueue`
 - `UpdateCraftingQueueBlueprint_BPI` → delega a `UpdateCraftingQueueBlueprint`
 
-`AddRuneToQueue` será llamada desde `UI_ItemSlot` → `OnDrop` cuando el ítem
-dropeado sea una runa. Pendiente de implementar la intercepción.
+`AddRuneToQueue` es llamada desde `UI_ItemSlot` → `OnDrop` cuando el ítem
+dropeado es detectado como runa via `Does Container Match Tag Query`.
+
+---
+
+## Relación con UI_ItemSlot — intercepción en OnDrop
+
+La intercepción ocurre en el flujo `False` del Branch `bRepairAction AND bUseItemFlag`:
+
+```
+Branch False (bRepairAction) →
+  Does Container Match Tag Query
+    Tag Container: ItemTags del BP_DraggedItem
+    Tag Query: Any Tags Match →
+      EasyRPG.Items.Equipment.HeadRuneWord
+      EasyRPG.Items.Equipment.BodyRuneWord
+      EasyRPG.Items.Equipment.PantsRuneWord
+      EasyRPG.Items.Equipment.HandsRuneWord
+      EasyRPG.Items.Equipment.FeetRuneWord
+      EasyRPG.Items.Equipment.BackpackRuneWord
+      EasyRPG.Items.Equipment.ToolRuneWord
+  → Branch
+      True  → Get Owning Player → Get HUD → Cast To BP_HUD_Game
+               → GET HUD → Cast To UI_HUD → GET CraftingQueue
+               → AddRuneToQueue (RuneIcon, AssignDuration: 5.0, TargetContainer,
+                 TargetSlot, SourceContainer, SourceSlot)
+               → Return True
+      False → TryMoveItemToContainerSlot_BPI (flujo normal existente)
+```
+
+> **Nota:** `AssignDuration` está hardcodeado a `5.0` como valor de prueba.
+> Debe hacerse configurable en una sesión futura.
 
 ---
 
@@ -162,13 +191,13 @@ dropeado sea una runa. Pendiente de implementar la intercepción.
 
 | Problema | Notas | Estado |
 |---|---|---|
-| OnRuneAssignComplete sin implementar | Flujo planificado documentado arriba | ⏳ Pendiente |
 | Index 0 hardcodeado en OnRuneAssignComplete | Necesita lógica dinámica para queue múltiple | Pendiente — post Lógica 1 |
-| Interceptar OnDrop en UI_ItemSlot | Punto de entrada del cooldown desde el drag | ⏳ Pendiente |
-| Bind_Time_Text en UI_RuneAssignQueue | Countdown visual pendiente | ⏳ Pendiente |
-| BtnCancel en UI_RuneAssignQueue | Cancelar timer y devolver runa | ⏳ Pendiente |
+| AssignDuration hardcodeado a 5.0 | Debe hacerse configurable | ⏳ Pendiente |
+| Runa permanece en inventario durante cooldown | Debe removerse al iniciar — Opción A acordada con cliente | ⏳ Pendiente — próxima sesión |
+| BtnCancel en UI_RuneAssignQueue | Decisión de diseño del cliente pendiente | ⏳ Pendiente — próxima sesión |
 
 ---
 
-*Archivo actualizado — sesión Light Paradox (Lógica 1 — AddRuneToQueue implementado, OnRuneAssignComplete pendiente)*
+*Archivo actualizado — sesión Light Paradox (Lógica 1 — implementación completa core)*
+*Cambios: OnRuneAssignComplete implementado, intercepción OnDrop documentada, Tag Query completa con 7 tipos de runa*
 *Project: Light Paradox · Base: EasySurvivalRPGv5*

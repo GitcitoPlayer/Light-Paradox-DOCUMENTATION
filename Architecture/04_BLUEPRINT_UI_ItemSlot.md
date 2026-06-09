@@ -104,8 +104,6 @@ Entry →
                SetVisibility (Icon widget, Select(IsValid(LocalIcon): Visible / Hidden))
 ```
 
-> **Nota:** La condición `bUseItem == True` es el "Alexito's Item Lock". Si es False, el slot muestra el BackgroundTexture en lugar del ícono del ítem.
-
 ---
 
 ## SetContainerReference
@@ -146,9 +144,7 @@ Entry (PointerEvent) →
         bShift OR bControl → bSplitMode
         Amount > 1 → bHasMultiple
 
-        LocalAmount = Select (bControl):
-          False → Select (bShift: False = Amount, True = Amount/2... ver nota)
-          [anidado con bHasMultiple para resolver cantidad final]
+        LocalAmount = Select (bControl) / Select (bShift) / Select (bHasMultiple)
 
         Set LocalAmount = resultado →
         PlaySound2D (Select(bSplitMode: SplitSound / MoveSound)) →
@@ -159,16 +155,12 @@ Entry (PointerEvent) →
         Return (Operation: BP_DraggedItem)
 ```
 
-> **Nota cantidad:** La lógica de selección de cantidad usa tres Select nodes anidados:
-> - `bHasMultiple` → si Amount <= 1, siempre Amount completo
-> - `bControl` → si True, Amount / 2
-> - `bShift` → si True, 1 (un solo ítem)
-> - Sin modificadores → Amount completo
-
 ---
 
 ## OnDrop
 **Tooltip:** Try to move item to slot.
+
+### Flujo completo con intercepción de runas (modificado — sesión Lógica 1)
 
 ```
 Entry (Operation, PointerEvent) →
@@ -178,59 +170,69 @@ Entry (Operation, PointerEvent) →
           → Cast Failed → Return False
           → Cast Success →
               GetOwningPlayer →
-              TryToAddAbstractItemToSlot_BPI (Player,
-                Item: ItemDataToTransfer(BP_AbstractItem.ItemData),
-                Container, Slot: SlotNumber) →
-              PlaySound2D (MoveSound) →
-              Return True
+              TryToAddAbstractItemToSlot_BPI → PlaySound2D → Return True
 
     → Cast Success →
         Branch (NOT IsBlocked)
-          → False → [nada / flujo termina]
+          → False → [termina]
           → True  →
-              Get self.ItemData, Get BP_DraggedItem.ItemData
-              ItemIsRepairable(self.ItemData) → bRepairable
-              ItemIsRepairKit(BP_DraggedItem.ItemData) → bIsRepairKit
-              bRepairable AND bIsRepairKit → bRepairAction
-
-              bUseItem == True → bUseItemFlag  [Alexito's Lock]
+              bRepairAction = ItemIsRepairable(self.ItemData) AND ItemIsRepairKit(BP_DraggedItem.ItemData)
+              bUseItemFlag = (bUseItem == True)
 
               Branch (bRepairAction AND bUseItemFlag)
-                → True  →
-                    GetOwningPlayer →
-                    TryToRepairItem_BPI (Player,
-                      FromContainer: BP_DraggedItem.FromContainer,
-                      FromSlot: BP_DraggedItem.FromSlot,
-                      ToContainer: Container,
-                      ToSlot: SlotNumber) →
-                    PlaySound2D (MoveSound) →
-                    Return True
+                → True  → TryToRepairItem_BPI → PlaySound2D → Return True
 
                 → False →
-                    GetOwningPlayer →
-                    TryMoveItemToContainerSlot_BPI (Player,
-                      FromContainer: BP_DraggedItem.FromContainer,
-                      FromSlot: BP_DraggedItem.FromSlot,
-                      FromSlotType: BP_DraggedItem.FromSlotType,
-                      ToContainer: Container,
-                      ToSlot: SlotNumber,
-                      Amount: BP_DraggedItem.Amount) →
-                    Set bUseItem = (RandomInteger(100) <= bUseItemChance)  [Alexito's Chance] →
-                    DelayAssignment →
-                    PlaySound2D (MoveSound) →
-                    Return True
+                    Does Container Match Tag Query
+                      Tag Container: Get Item Tags (BP_DraggedItem.ItemData)
+                      Tag Query: Any Tags Match →
+                        EasyRPG.Items.Equipment.HeadRuneWord
+                        EasyRPG.Items.Equipment.BodyRuneWord
+                        EasyRPG.Items.Equipment.PantsRuneWord
+                        EasyRPG.Items.Equipment.HandsRuneWord
+                        EasyRPG.Items.Equipment.FeetRuneWord
+                        EasyRPG.Items.Equipment.BackpackRuneWord
+                        EasyRPG.Items.Equipment.ToolRuneWord
+                    → Branch (es runa)
+                        → True →
+                            Get Owning Player → Get HUD →
+                            Cast To BP_HUD_Game →
+                            GET HUD → Cast To UI_HUD →
+                            GET CraftingQueue →
+                            AddRuneToQueue (
+                              RuneIcon: GetItemIcon(BP_DraggedItem.ItemData),
+                              AssignDuration: 5.0,
+                              TargetContainer: GET Container,
+                              TargetSlot: GET SlotNumber,
+                              SourceContainer: BP_DraggedItem.FromContainer,
+                              SourceSlot: BP_DraggedItem.FromSlot)
+                            → Return True
+
+                        → False →
+                            TryMoveItemToContainerSlot_BPI →
+                            Set bUseItem = (RandomInteger(100) <= bUseItemChance) →
+                            DelayAssignment →
+                            PlaySound2D → Return True
 ```
 
-> **Nota:** "Alexito's Lock" y "Alexito's Chance" son comentarios visibles en el export original. Son mecanismos de control heredados del asset base que limitan cuándo puede ejecutarse el `UpdateItemData` post-drop.
+> **Nota:** La intercepción de runas ocurre en el pin False del Branch
+> `bRepairAction AND bUseItemFlag`. El flujo normal de TryMoveItemToContainerSlot_BPI
+> se preserva intacto para ítems no runa.
+
+> **Nota:** `AssignDuration` está hardcodeado a `5.0` como valor de prueba.
+> Debe hacerse configurable en una sesión futura.
 
 ---
 
 ## Notas de arquitectura
 
-- `UI_ItemSlot` **llama directamente** a `UpdateItemData` desde varios puntos (EventGraph, SetContainerReference, DelayAssignment). Esto es relevante para el gate `bSlotUpdateEnabled` definido en `03_LIGHTPARADOX_PROJECT_RULES.md`.
-- El widget **se auto-actualiza** vía `Construct` y `PreConstruct`, lo cual viola **Rule 3.3** del documento de reglas del proyecto (no self-update logic). Pendiente de resolver en clase hija `UI_ItemSlot_LP`.
-- El sistema de decay usa un timer propio con `SetTimerDelegate → UpdateDecayTick`. Este timer **vive en el slot**, no en `UI_HUD`.
-- `bUseItem` actúa como gate interno del slot para controlar si se muestra el ícono real o el fondo vacío.
+- `UI_ItemSlot` **llama directamente** a `UpdateItemData` desde varios puntos.
+  Relevante para el gate `bSlotUpdateEnabled` definido en `03_LIGHTPARADOX_PROJECT_RULES.md`.
+- El widget **se auto-actualiza** vía `Construct` y `PreConstruct` — viola Rule 3.3.
+  Pendiente de resolver en clase hija `UI_ItemSlot_LP`.
+- El sistema de decay usa un timer propio con `SetTimerDelegate → UpdateDecayTick`.
+  Este timer vive en el slot, no en `UI_HUD` — viola Rule 3.4.
+- `bUseItem` actúa como gate interno del slot para controlar si se muestra el ícono real.
 
 ---
 
@@ -241,9 +243,10 @@ Entry (Operation, PointerEvent) →
 | Auto-update en Construct y PreConstruct | Rule 3.3 | Pendiente — resolver en UI_ItemSlot_LP |
 | Timer de decay vive en el slot, no en UI_HUD | Rule 3.4 | Pendiente — requiere refactor de decay |
 | Ediciones en asset base, no en clase hija | Rule 4.1 | Pendiente — migrar a UI_ItemSlot_LP |
+| AssignDuration hardcodeado a 5.0 en OnDrop | — | Pendiente — hacer configurable |
 
 ---
 
-*Archivo actualizado — sesión Light Paradox (RuneAltar ScrollBox visibility)*
-*Sin cambios de lógica en esta sesión — deuda técnica registrada*
+*Archivo actualizado — sesión Light Paradox (Lógica 1 — intercepción de runas en OnDrop)*
+*Cambios: OnDrop actualizado con flujo completo de intercepción de runas via Does Container Match Tag Query*
 *Project: Light Paradox · Base: EasySurvivalRPGv5*

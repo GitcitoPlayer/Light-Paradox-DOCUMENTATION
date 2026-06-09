@@ -77,13 +77,14 @@ Razones:
 | `TargetSlot` | `Integer` | Slot destino |
 | `SourceContainer` | `BP_ContainerComponent` (Object Reference) | Contenedor origen |
 | `SourceSlot` | `Integer` | Slot origen |
+| `StartTime` | `Float` | Tiempo de inicio del cooldown. Usado por Bind_Time_Text para calcular tiempo restante. |
 
 ### Funciones confirmadas
 
 | Función | Estado | Notas |
 |---|---|---|
 | `Bind_Amount_Text` | Eliminada | No se usa en runas |
-| `Bind_Time_Text` | Vaciada | Pendiente reimplementar para countdown |
+| `Bind_Time_Text` | Implementada | Muestra countdown en segundos enteros |
 | `InitRuneAssignQueue` | Implementada | Renombrada desde UpdateBlueprint |
 
 ### InitRuneAssignQueue — flujo implementado
@@ -99,7 +100,25 @@ Entry (RuneIcon, AssignDuration, TargetContainer, TargetSlot,
   → SET SourceSlot
   → Make Brush from Texture (Texture: GET RuneIcon, 256x256)
   → Set Brush (Target: Icon widget, Brush: Return Value)
+  → Get Game Time in Seconds
+  → SET StartTime ← Return Value
 ```
+
+### Bind_Time_Text — flujo implementado
+
+```
+Entry →
+  Get Game Time in Seconds → Return Value
+  GET StartTime
+  - (resta) → Elapsed = GameTime - StartTime
+  GET AssignDuration
+  - (resta) → Remaining = AssignDuration - Elapsed
+  MAX (Remaining, 0.0) → tiempo restante sin negativos
+  To Text (Float) → Maximum Fractional Digits = 0
+  Return Node ← Return Value de To Text
+```
+
+> **Nota:** El binding está reconectado en el Designer al TextBlock `Time`.
 
 ### Hierarchy confirmado
 
@@ -117,11 +136,6 @@ Entry (RuneIcon, AssignDuration, TargetContainer, TargetSlot,
 
 > **Nota:** `Amount` fue eliminado del Hierarchy. Las runas no tienen cantidad.
 
-### Bindings
-
-- `Bind_Time_Text` removido del TextBlock `Time` en Designer
-- Pendiente reimplementar para mostrar countdown
-
 ### Estado de implementación
 
 | Componente | Estado |
@@ -129,9 +143,24 @@ Entry (RuneIcon, AssignDuration, TargetContainer, TargetSlot,
 | Duplicar y limpiar UI_QueueBlueprint | ✅ Completo |
 | Variables de instancia | ✅ Completo |
 | InitRuneAssignQueue | ✅ Completo |
-| Bind_Time_Text countdown | ⏳ Pendiente |
-| BtnCancel lógica propia | ⏳ Pendiente |
+| Bind_Time_Text countdown | ✅ Completo |
+| BtnCancel lógica propia | ⏳ Pendiente — decisión de diseño del cliente pendiente |
 | Event Construct | ⏳ Pendiente |
+
+---
+
+## Decisión de diseño pendiente — BtnCancel
+
+El cliente confirmó que el diseño del sistema de runas cambiará y la
+cancelación del queue ya no será necesaria en su forma actual.
+La lógica de BtnCancel se revisará en una sesión futura cuando el
+nuevo diseño esté definido.
+
+**Contexto relevante para la próxima sesión:**
+El asset base (ESRPGv5) remueve el ítem del inventario al iniciar
+el crafteo queue, y lo devuelve al cancelar. Para runas, la decisión
+de diseño tomada es la Opción A — mismo comportamiento. La implementación
+queda pendiente hasta que el cliente defina el nuevo diseño del sistema.
 
 ---
 
@@ -139,10 +168,12 @@ Entry (RuneIcon, AssignDuration, TargetContainer, TargetSlot,
 
 | Problema | Notas | Estado |
 |---|---|---|
-| Bind_Time_Text vacío | Necesita reimplementarse para mostrar countdown en segundos | Pendiente |
-| BtnCancel sin lógica | Debe devolver la runa al inventario y cancelar el timer | Pendiente |
+| BtnCancel sin lógica | Decisión de diseño del cliente pendiente | ⏳ Pendiente — próxima sesión |
+| Event Construct sin implementar | Pendiente evaluar si es necesario | Pendiente |
+| Runa permanece en inventario durante cooldown | Debe removerse al iniciar — Opción A acordada | ⏳ Pendiente — próxima sesión |
 
 ---
 
-*Archivo actualizado — sesión Light Paradox (Lógica 1 — implementación parcial)*
+*Archivo actualizado — sesión Light Paradox (Lógica 1 completada parcialmente)*
+*Cambios: Bind_Time_Text implementado, StartTime agregado, BtnCancel pendiente por decisión de diseño*
 *Project: Light Paradox · Base: EasySurvivalRPGv5*
