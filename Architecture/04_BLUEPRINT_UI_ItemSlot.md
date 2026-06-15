@@ -26,6 +26,52 @@
 | `DecayTimerHandle` | TimerHandle | Handle del timer de decay |
 | `DecayTimerTick` | Float (double) | Intervalo del timer de decay |
 | `Icon` | Image (UMG widget) | Widget imagen del ícono |
+| `SuccessChance` | Integer | Probabilidad de éxito al asignar runa. Default 100. Asignado por slot en Designer. |
+| `bIsLocked` | Boolean | True cuando el slot tiene candado activo. Rechaza drops mientras es True. |
+
+---
+
+## Hierarchy de UI_ItemSlot (confirmado)
+
+```
+[UI_ItemSlot]
+  └── [Size Box]
+        └── ButtonItem
+              └── [Overlay]
+                    ├── [Background]
+                    └── ItemOverlay
+                          ├── Icon         ← ícono del ítem
+                          ├── [Amount]     ← cantidad del stack
+                          └── LockIcon     ← candado (Collapsed por defecto, Visible cuando bIsLocked = True)
+                    └── [Size Box]
+                          └── DurabilityBar
+                    └── [NeedRepairBox]
+                          └── NeedRepairIcon
+              └── Frame
+```
+
+> **Nota:** `LockIcon` es un widget Image agregado en sesión Light Paradox (Lógica 1 rediseño).
+> Tiene `Is Variable = True`. Visibility default = `Collapsed`.
+> Textura: placeholder asignado en Designer — pendiente arte final.
+
+---
+
+## Valores de SuccessChance por slot (Head)
+
+| Slot | Widget | SuccessChance |
+|---|---|---|
+| 1 | `Equipment_HeadRuneSlot` | 100 |
+| 2 | `Equipment_HeadRuneSlot_1` | 90 |
+| 3 | `Equipment_HeadRuneSlot_2` | 80 |
+| 4 | `Equipment_HeadRuneSlot_3` | 70 |
+| 5 | `Equipment_HeadRuneSlot_4` | 60 |
+| 6 | `Equipment_HeadRuneSlot_5` | 50 |
+| 7 | `Equipment_HeadRuneSlot_6` | 40 |
+| 8 | `Equipment_HeadRuneSlot_7` | 30 |
+| 9 | `Equipment_HeadRuneSlot_8` | 20 |
+| 10 | `Equipment_HeadRuneSlot_9` | 10 |
+
+> **Nota:** Slot 1 siempre tiene 100% — nunca falla. Confirmado por el cliente.
 
 ---
 
@@ -160,7 +206,7 @@ Entry (PointerEvent) →
 ## OnDrop
 **Tooltip:** Try to move item to slot.
 
-### Flujo completo con intercepción de runas (modificado — sesión Lógica 1)
+### Flujo completo con intercepción de runas y sistema de probabilidad (Lógica 1 rediseño)
 
 ```
 Entry (Operation, PointerEvent) →
@@ -173,7 +219,7 @@ Entry (Operation, PointerEvent) →
               TryToAddAbstractItemToSlot_BPI → PlaySound2D → Return True
 
     → Cast Success →
-        Branch (NOT IsBlocked)
+        Branch (NOT IsBlocked AND NOT bIsLocked)
           → False → [termina]
           → True  →
               bRepairAction = ItemIsRepairable(self.ItemData) AND ItemIsRepairKit(BP_DraggedItem.ItemData)
@@ -194,33 +240,49 @@ Entry (Operation, PointerEvent) →
                         EasyRPG.Items.Equipment.BackpackRuneWord
                         EasyRPG.Items.Equipment.ToolRuneWord
                     → Branch (es runa)
-                        → True →
-                            Get Owning Player → Get HUD →
-                            Cast To BP_HUD_Game →
-                            GET HUD → Cast To UI_HUD →
-                            GET CraftingQueue →
-                            AddRuneToQueue (
-                              RuneIcon: GetItemIcon(BP_DraggedItem.ItemData),
-                              AssignDuration: 5.0,
-                              TargetContainer: GET Container,
-                              TargetSlot: GET SlotNumber,
-                              SourceContainer: BP_DraggedItem.FromContainer,
-                              SourceSlot: BP_DraggedItem.FromSlot)
-                            → Return True
+                        → False → TryMoveItemToContainerSlot_BPI →
+                                  Set bUseItem = (RandomInteger(100) <= bUseItemChance) →
+                                  DelayAssignment → PlaySound2D → Return True
 
-                        → False →
-                            TryMoveItemToContainerSlot_BPI →
-                            Set bUseItem = (RandomInteger(100) <= bUseItemChance) →
-                            DelayAssignment →
-                            PlaySound2D → Return True
+                        → True →
+                            Random Integer in Range (0..100) <= GET SuccessChance
+                            → Branch (Éxito/Fallo)
+
+                              ÉXITO (True) →
+                                TryMoveItemToContainerSlot_BPI
+                                  From Container: BP_DraggedItem.FromContainer
+                                  From Slot: BP_DraggedItem.FromSlot
+                                  To Container: GET Container
+                                  To Slot: GET SlotNumber
+                                  Amount: -1
+                                → Get Owning Player → Get HUD → Cast To BP_HUD_Game
+                                → GET HUD → Cast To UI_HUD → GET CharacterInformation
+                                → GetNextRuneSlot (CurrentSlotNumber: GET SlotNumber)
+                                → Get Owning Player → Get HUD → Cast To BP_HUD_Game
+                                → GET HUD → Cast To UI_HUD → GET CraftingQueue
+                                → AddRuneToQueue (
+                                    AssignDuration: 5.0,
+                                    TargetContainer: GET Container,
+                                    TargetSlot: GET SlotNumber,
+                                    SourceContainer: BP_DraggedItem.FromContainer,
+                                    SourceSlot: BP_DraggedItem.FromSlot,
+                                    LockedSlot: NextSlot)
+                                → Return True
+
+                              FALLO (False) →
+                                → Get Owning Player → Get HUD → Cast To BP_HUD_Game
+                                → GET HUD → Cast To UI_HUD → GET CraftingQueue
+                                → AddRuneToQueue (
+                                    AssignDuration: 5.0,
+                                    LockedSlot: Get Reference To Self)
+                                → Return True
 ```
 
-> **Nota:** La intercepción de runas ocurre en el pin False del Branch
-> `bRepairAction AND bUseItemFlag`. El flujo normal de TryMoveItemToContainerSlot_BPI
-> se preserva intacto para ítems no runa.
+> **Nota:** `AssignDuration` hardcodeado a `5.0` como valor de prueba.
+> Debe hacerse configurable en sesión futura.
 
-> **Nota:** `AssignDuration` está hardcodeado a `5.0` como valor de prueba.
-> Debe hacerse configurable en una sesión futura.
+> **Nota:** `Print String "No es runa"` existe como debug temporal en el pin False
+> del Branch de detección de runas. Pendiente eliminar.
 
 ---
 
@@ -233,6 +295,8 @@ Entry (Operation, PointerEvent) →
 - El sistema de decay usa un timer propio con `SetTimerDelegate → UpdateDecayTick`.
   Este timer vive en el slot, no en `UI_HUD` — viola Rule 3.4.
 - `bUseItem` actúa como gate interno del slot para controlar si se muestra el ícono real.
+- `bIsLocked` es el gate del sistema de runas — independiente de `IsBlocked`.
+  `IsBlocked` es para operaciones de repair/use. `bIsLocked` es para el candado de runas.
 
 ---
 
@@ -244,9 +308,11 @@ Entry (Operation, PointerEvent) →
 | Timer de decay vive en el slot, no en UI_HUD | Rule 3.4 | Pendiente — requiere refactor de decay |
 | Ediciones en asset base, no en clase hija | Rule 4.1 | Pendiente — migrar a UI_ItemSlot_LP |
 | AssignDuration hardcodeado a 5.0 en OnDrop | — | Pendiente — hacer configurable |
+| Print String "No es runa" debug temporal | — | Pendiente — eliminar |
+| Pin RuneIcon sin uso en AddRuneToQueue | — | Pendiente — limpiar |
 
 ---
 
-*Archivo actualizado — sesión Light Paradox (Lógica 1 — intercepción de runas en OnDrop)*
-*Cambios: OnDrop actualizado con flujo completo de intercepción de runas via Does Container Match Tag Query*
+*Archivo actualizado — sesión Light Paradox (Lógica 1 rediseño + Lógica 4 probabilidad)*
+*Cambios: Variables SuccessChance y bIsLocked agregadas, LockIcon en Hierarchy, OnDrop actualizado con sistema de probabilidad y bifurcación éxito/fallo*
 *Project: Light Paradox · Base: EasySurvivalRPGv5*

@@ -2,7 +2,7 @@
 ### Widget base: UI_QueueBlueprint
 ### Widget nuevo: UI_RuneAssignQueue
 ### Base Asset: EasySurvivalRPGv5
-### Fuente: Inspección directa — sesión Light Paradox (Lógica 1 — Cooldown RuneAssign)
+### Fuente: Inspección directa — sesión Light Paradox (Lógica 1 rediseño)
 
 ---
 
@@ -28,16 +28,16 @@ Muestra: icono del ítem, tiempo restante, cantidad, y botón de cancelar.
               │                 └── BtnCancelIcon (Image)
               └── [Border]
                     └── [Horizontal Box]
-                          ├── Time (Text) — ej: "10 sec"
-                          └── Amount (Text) — ej: "x2"
+                          ├── Time (Text)
+                          └── Amount (Text)
 ```
 
 ### Variables confirmadas
 
 | Variable | Tipo | Notas |
 |---|---|---|
-| `Queue Blueprint` | STR_QueueBlueprint | Struct con datos del crafteo. Se setea via Update Blueprint. |
-| `Size` | Vector2D | Tamaño del widget. Pasado al crear desde UI_CraftingQueue (100x100). |
+| `Queue Blueprint` | STR_QueueBlueprint | Struct con datos del crafteo |
+| `Size` | Vector2D | Tamaño del widget |
 
 ### Funciones confirmadas
 
@@ -57,6 +57,9 @@ Duplicado de `UI_QueueBlueprint`. No reutiliza el original porque está
 acoplado a `STR_QueueBlueprint` y a `Cancel Crafting BPI`.
 Vive dentro de `UI_CraftingQueue` en el panel `RuneQueueBox`.
 
+Representa visualmente el cooldown de desbloqueo de slot de runa.
+Muestra un ícono de candado y un countdown — no el ícono de la runa arrastrada.
+
 ### Decisión de arquitectura
 
 `UI_RuneAssignQueue` vive en `UI_CraftingQueue`, no en `UI_Character`.
@@ -71,7 +74,7 @@ Razones:
 
 | Variable | Tipo | Notas |
 |---|---|---|
-| `RuneIcon` | `Texture2D` (Object Reference) | Icono de la runa |
+| `RuneIcon` | `Texture2D` (Object Reference) | ⚠️ Sin uso tras rediseño — ícono es candado hardcodeado |
 | `AssignDuration` | `Float` | Duración del cooldown |
 | `TargetContainer` | `BP_ContainerComponent` (Object Reference) | Contenedor destino |
 | `TargetSlot` | `Integer` | Slot destino |
@@ -84,25 +87,28 @@ Razones:
 | Función | Estado | Notas |
 |---|---|---|
 | `Bind_Amount_Text` | Eliminada | No se usa en runas |
-| `Bind_Time_Text` | Implementada | Muestra countdown en segundos enteros |
-| `InitRuneAssignQueue` | Implementada | Renombrada desde UpdateBlueprint |
+| `Bind_Time_Text` | Implementada ✅ | Muestra countdown en segundos enteros |
+| `InitRuneAssignQueue` | Implementada ✅ | Renombrada desde UpdateBlueprint. Ícono hardcodeado a candado. |
 
 ### InitRuneAssignQueue — flujo implementado
 
 ```
 Entry (RuneIcon, AssignDuration, TargetContainer, TargetSlot,
        SourceContainer, SourceSlot)
-  → SET RuneIcon
+  → SET RuneIcon (sin uso — pendiente limpiar)
   → SET AssignDuration
   → SET TargetContainer
   → SET TargetSlot
   → SET SourceContainer
   → SET SourceSlot
-  → Make Brush from Texture (Texture: GET RuneIcon, 256x256)
+  → Make Brush from Texture (Texture: textura candado hardcodeada via Use Selected Asset)
   → Set Brush (Target: Icon widget, Brush: Return Value)
   → Get Game Time in Seconds
   → SET StartTime ← Return Value
 ```
+
+> **Nota:** El pin `Texture` de `Make Brush from Texture` tiene la textura de candado
+> hardcodeada via "Use Selected Asset from Content Browser". No usa el pin `RuneIcon`.
 
 ### Bind_Time_Text — flujo implementado
 
@@ -126,15 +132,16 @@ Entry →
 [UI_RuneAssignQueue]
   └── BlueprintSizeBox
         └── [Overlay]
-              ├── Icon (Image)
+              ├── Icon (Image)   ← muestra candado hardcodeado
               ├── [Size Box]
-              │     └── BtnCancel (Button)
+              │     └── BtnCancel (Button)   ← deshabilitado
               └── [Border]
                     └── [Horizontal Box]
-                          └── Time (Text)
+                          └── Time (Text)   ← countdown
 ```
 
 > **Nota:** `Amount` fue eliminado del Hierarchy. Las runas no tienen cantidad.
+> `BtnCancel` existe pero está deshabilitado — el cliente confirmó que no se necesita cancelación.
 
 ### Estado de implementación
 
@@ -142,25 +149,10 @@ Entry →
 |---|---|
 | Duplicar y limpiar UI_QueueBlueprint | ✅ Completo |
 | Variables de instancia | ✅ Completo |
-| InitRuneAssignQueue | ✅ Completo |
+| InitRuneAssignQueue con candado hardcodeado | ✅ Completo |
 | Bind_Time_Text countdown | ✅ Completo |
-| BtnCancel lógica propia | ⏳ Pendiente — decisión de diseño del cliente pendiente |
-| Event Construct | ⏳ Pendiente |
-
----
-
-## Decisión de diseño pendiente — BtnCancel
-
-El cliente confirmó que el diseño del sistema de runas cambiará y la
-cancelación del queue ya no será necesaria en su forma actual.
-La lógica de BtnCancel se revisará en una sesión futura cuando el
-nuevo diseño esté definido.
-
-**Contexto relevante para la próxima sesión:**
-El asset base (ESRPGv5) remueve el ítem del inventario al iniciar
-el crafteo queue, y lo devuelve al cancelar. Para runas, la decisión
-de diseño tomada es la Opción A — mismo comportamiento. La implementación
-queda pendiente hasta que el cliente defina el nuevo diseño del sistema.
+| BtnCancel | ⛔ Deshabilitado — decisión de diseño del cliente |
+| Event Construct | ⏳ Pendiente evaluar si es necesario |
 
 ---
 
@@ -168,12 +160,12 @@ queda pendiente hasta que el cliente defina el nuevo diseño del sistema.
 
 | Problema | Notas | Estado |
 |---|---|---|
-| BtnCancel sin lógica | Decisión de diseño del cliente pendiente | ⏳ Pendiente — próxima sesión |
+| Pin RuneIcon sin uso | Variable y pin en InitRuneAssignQueue no se usan — pendiente limpiar | ⏳ Pendiente |
+| BtnCancel sin lógica | Deshabilitado por decisión del cliente. Revisar si se elimina o se mantiene inactivo | ⏳ Pendiente |
 | Event Construct sin implementar | Pendiente evaluar si es necesario | Pendiente |
-| Runa permanece en inventario durante cooldown | Debe removerse al iniciar — Opción A acordada | ⏳ Pendiente — próxima sesión |
 
 ---
 
-*Archivo actualizado — sesión Light Paradox (Lógica 1 completada parcialmente)*
-*Cambios: Bind_Time_Text implementado, StartTime agregado, BtnCancel pendiente por decisión de diseño*
+*Archivo actualizado — sesión Light Paradox (Lógica 1 rediseño)*
+*Cambios: Ícono cambiado a candado hardcodeado, BtnCancel documentado como deshabilitado, diseño del sistema actualizado*
 *Project: Light Paradox · Base: EasySurvivalRPGv5*
