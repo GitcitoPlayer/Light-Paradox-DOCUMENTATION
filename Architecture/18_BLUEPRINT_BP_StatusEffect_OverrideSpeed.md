@@ -14,7 +14,7 @@ velocidad de movimiento del personaje. Al activarse establece una velocidad
 fija. Al destruirse restaura la velocidad normal.
 
 Efectos que lo usan: `Effect_Trapped` (velocidad 0 — inmovilizacion total).
-Efectos pendientes: `Effect_Slow` (velocidad reducida — pendiente Logica 6).
+Clase hija creada: `BP_StatusEffect_Slow` (velocidad reducida — prototipo funcional Logica 6).
 
 ---
 
@@ -62,40 +62,53 @@ Event Destroyed
 
 ---
 
-## Plan para Effect_Slow -- pendiente Logica 6
+## BP_StatusEffect_Slow -- clase hija creada (Logica 6)
 
-Para implementar Ralentizar sin modificar el asset base:
+`BP_StatusEffect_Slow` es la clase hija de `BP_StatusEffect_OverrideSpeed`
+creada en sesion Logica 6 para implementar el Estado Ralentizar.
 
-### Paso 1 -- Crear BP_StatusEffect_Slow
+### Como se creo
 1. Content Browser → clic derecho sobre `BP_StatusEffect_OverrideSpeed`
 2. **Create Child Blueprint Class**
 3. Nombre: `BP_StatusEffect_Slow`
 
-### Paso 2 -- Cambiar Default Values
-1. Abre `BP_StatusEffect_Slow`
-2. Panel **My Blueprint → Variables**
-3. Selecciona `Overrided Walk Speed`
-4. En **Details → Default Value**: cambiar a la velocidad reducida deseada
-   (ejemplo: `200.0` si la velocidad normal es `400.0` — 50%)
-5. `Overrided Walk Interp Speed`: ajustar segun necesidad
+### Como cambiar la velocidad en una clase hija
 
-### Paso 3 -- Agregar fila Effect_Slow en DT_StatusEffects
+Las variables heredadas no aparecen en el panel **My Blueprint** del child.
+Para cambiar `Overrided Walk Speed` en `BP_StatusEffect_Slow`:
+
+1. Abre `BP_StatusEffect_Slow`
+2. Toolbar superior → boton **Class Defaults**
+3. Panel **Details** muestra todas las variables heredadas del parent
+4. Busca `Overrided Walk Speed` → cambiar valor (prueba actual: **TBD — pendiente cliente**)
+5. `Overrided Walk Interp Speed`: dejar en `0.0`
+6. Compile → Save
+
+> **Nota:** Si `Overrided Walk Speed` no aparece en Class Defaults, la variable
+> en el parent no tiene **Instance Editable** activado. Solucion: abrir
+> `BP_StatusEffect_OverrideSpeed` → seleccionar la variable → activar
+> **Instance Editable** → Compile → volver al child.
+
+### Fila en DT_StatusEffects
+
 | Campo | Valor |
 |---|---|
+| `Handle.Data Table` | `DT_StatusEffects` ← **configurar manualmente** |
+| `Handle.Row Name` | `Effect_Slow` ← **configurar manualmente** |
 | `EffectClass` | `BP_StatusEffect_Slow` |
 | `IsPositiveEffect` | False |
-| `Duration` | TBD (decision del cliente) |
-| `MaxStack` | 1 |
-| `Name` | Slow |
+| `Duration` | `5.0` (prueba) |
+| `MaxStack` | `1` |
+| `Name` | `Slow` |
 | `EffectAttributes` | vacio |
 | `EffectAttributesMapped` | vacio |
 
-> **Nota:** No requiere EffectAttributes porque la velocidad vive en el BP,
-> igual que Effect_Trapped. Esta es la misma arquitectura del asset base.
+> El campo `Handle` debe configurarse manualmente en filas nuevas.
+> Ver `15_SYSTEM_StatusEffects.md` seccion "Configuracion del campo Handle".
 
-### Paso 4 -- Trigger de prueba
-Mismo patron que `BP_PoisonTrigger` con Row Name `Effect_Slow`.
-Ver `19_BLUEPRINT_BP_PoisonTrigger.md` para el patron completo.
+### Trigger de prueba
+`BP_SlowTrigger` — patron identico a `BP_PoisonTrigger` con Row Name `Effect_Slow`.
+Ver `19_BLUEPRINT_BP_PoisonTrigger.md`.
 
 ---
 
@@ -103,11 +116,11 @@ Ver `19_BLUEPRINT_BP_PoisonTrigger.md` para el patron completo.
 
 | Problema | Notas | Estado |
 |---|---|---|
-| BP_StatusEffect_Slow sin crear | Pendiente sesion Logica 6 siguiente | Pendiente |
 | Velocidad reducida de Slow sin definir | Pendiente decision del cliente | Pendiente |
 | Override Walk Speed BPI sin documentar | BPI que vive en BPI_Character — no inspeccionado | Pendiente |
 
 ---
 
-*Archivo creado -- sesion Light Paradox (Logica 6)*
+*Archivo actualizado -- sesion Light Paradox (Logica 6 -- BP_StatusEffect_Slow creado)*
+*Cambios: clase hija documentada, proceso de Class Defaults documentado, fila DT documentada con paso de Handle*
 *Project: Light Paradox - Base: EasySurvivalRPGv5 - UE 5.4.4*

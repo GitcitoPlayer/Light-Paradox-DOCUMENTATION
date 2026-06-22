@@ -174,9 +174,14 @@ Confirmado via inspeccion directa de BP_AbilitySystem.
 | `Effect_Bleeding` | BP_StatusEffect_TickDamage | False | 10s | 1 | DamagePerSecond = 5.0 via EffectAttributesMapped |
 | `Effect_Trapped` | BP_StatusEffect_OverrideSpeed | False | 1.5s | 1 | Velocidad 0 — sin EffectAttributes, hardcodeado en BP |
 | `Effect_Poison` | BP_StatusEffect_TickDamage | False | **TBD** | **TBD** | DamagePerSecond = 2.0 — prototipo funcional Logica 6 |
+| `Effect_Slow` | BP_StatusEffect_Slow | False | 5s (prueba) | 1 | Velocidad reducida — prototipo funcional Logica 6 |
 
 > **Nota Effect_Poison:** Valores de Duration y MaxStack pendientes de decision del cliente.
 > El prototipo usa Duration hardcodeada en BP_PoisonTrigger hasta implementar lectura del DT.
+
+> **Nota Effect_Slow:** Valor de velocidad reducida pendiente de decision del cliente.
+> `BP_StatusEffect_Slow` es clase hija de `BP_StatusEffect_OverrideSpeed` con
+> `Overrided Walk Speed` cambiado en Class Defaults. Duration actual: 5s (prueba).
 
 ---
 
@@ -239,7 +244,30 @@ On Component Begin Overlap (o cualquier trigger)
         Load Status Effect (Target: AbilitySystemComponent, Save Data: resultado)
 ```
 
-**Implementacion de referencia:** `BP_PoisonTrigger` — ver `19_BLUEPRINT_BP_PoisonTrigger.md`.
+**Implementacion de referencia:** `BP_PoisonTrigger` y `BP_SlowTrigger` — ver `19_BLUEPRINT_BP_PoisonTrigger.md`.
+
+---
+
+## Configuracion del campo Handle en DT_StatusEffects -- REQUERIDO
+
+**Confirmado en sesion Logica 6 al crear Effect_Slow.**
+
+Al agregar una fila nueva en `DT_StatusEffects`, el campo `Handle` dentro del
+Row Editor **no se autocompleta**. Debe configurarse manualmente o el efecto
+no se resolvera correctamente.
+
+### Pasos para configurar Handle en una fila nueva
+
+1. Abre `DT_StatusEffects`
+2. Selecciona la fila nueva en el Row Editor
+3. Expande la seccion **Handle**
+4. Campo **Data Table**: asignar `DT_StatusEffects`
+5. Campo **Row Name**: asignar el nombre exacto de la fila (ej: `Effect_Slow`, `Effect_Poison`)
+6. Save
+
+> **Nota:** Este paso aplica a toda fila nueva creada en `DT_StatusEffects`.
+> Las filas del asset base (Effect_Bleeding, Effect_Trapped, etc.) ya lo tienen configurado.
+> Las filas nuevas de Light Paradox requieren configuracion manual.
 
 ---
 
@@ -263,7 +291,7 @@ On Component Begin Overlap (o cualquier trigger)
 |---|---|
 | Fix Time Remaining — leer Duration del DT | Eliminar hardcode en BP_PoisonTrigger. Ver patron en seccion de trigger |
 | Definir valores finales de Effect_Poison | Duration y MaxStack pendientes de decision del cliente |
-| Implementar Effect_Slow | Requiere BP_StatusEffect_Slow (hijo de BP_StatusEffect_OverrideSpeed) + fila en DT. Ver 18_BLUEPRINT_BP_StatusEffect_OverrideSpeed.md |
+| Definir velocidad final de Effect_Slow | BP_StatusEffect_Slow creado y funcional. Valor de Overrided Walk Speed pendiente de decision del cliente |
 | Inspeccionar UI_StatusEffectToolTip | Documentar variables y funciones del widget de tooltip |
 | Inspeccionar BP_Building_Trap_Beartrap completo | Como patron de aplicacion desde trampa fisica |
 | STR_StatusEffectData | Struct adicional encontrado — rol desconocido. Pendiente inspeccion |
@@ -289,6 +317,6 @@ On Component Begin Overlap (o cualquier trigger)
 
 ---
 
-*Archivo actualizado -- sesion Light Paradox (Logica 6 -- sistema completo mapeado)*
-*Cambios: flujo completo documentado, STR_SaveData_StatusEffect documentado, bug countdown resuelto, patron de trigger confirmado, nota para Logica 5 agregada*
+*Archivo actualizado -- sesion Light Paradox (Logica 6 -- Effect_Slow funcional)*
+*Cambios: Effect_Slow agregado a tabla de filas, configuracion de campo Handle documentada como paso requerido en filas nuevas, BP_SlowTrigger agregado como referencia de implementacion*
 *Project: Light Paradox - Base: EasySurvivalRPGv5 - UE 5.4.4*
