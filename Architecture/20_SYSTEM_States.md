@@ -25,7 +25,7 @@ efectos en cualquier contexto del juego.
 [Cualquier fuente: trigger, enemigo, trampa, consumible, runa]
         │
         ▼
-  BP_StateApplier
+  BP_StateApplier (Blueprint Function Library)
     → Lee DT_States (fila del Estado)
     → Evalúa Rate (probabilidad)
     → Si pasa:
@@ -38,9 +38,9 @@ efectos en cualquier contexto del juego.
 
 ---
 
-## DT_States — Data Table
+## STR_StateData — Row Struct
 
-### Row Struct: STR_StateData (nuevo — por crear)
+Asset creado: `STR_StateData`
 
 | Campo | Tipo | Descripción |
 |---|---|---|
@@ -49,6 +49,20 @@ efectos en cualquier contexto del juego.
 | `Rate` | Float (0–100) | Probabilidad porcentual de que el Estado se ejecute al activarse. 100 = siempre se aplica. |
 | `Duration` | Float | Duración en segundos aplicada a los efectos cuando EffectsDurationOverride = True. 0 = infinito (el efecto persiste hasta que la fuente lo cancele explícitamente). |
 | `EffectsDurationOverride` | Boolean | True = usar el valor de Duration de este Estado para todos los efectos contenidos, ignorando sus duraciones individuales en DT_StatusEffects. False = cada efecto usa su propia Duration del DT. |
+
+---
+
+## DT_States — Data Table
+
+Asset creado: `DT_States` — Row Struct: `STR_StateData`
+
+### Filas confirmadas
+
+| Row Name | Effects | IsHitEffect | Rate | Duration | EffectsDurationOverride |
+|---|---|---|---|---|---|
+| `State_Poison` | `[Effect_Poison]` | False | 100 | 10.0 | True |
+
+> **Nota:** `State_Slow` pendiente de crear siguiendo el mismo patrón.
 
 ### Notas de diseño
 
@@ -63,68 +77,102 @@ efectos en cualquier contexto del juego.
 
 ```
 Row Name: State_CursedHealing
-  Effects:        [Effect_Healing, Effect_Slow]
-  IsHitEffect:    False
-  Rate:           100
-  Duration:       0        ← infinito
+  Effects:                [Effect_Healing, Effect_Slow]
+  IsHitEffect:            False
+  Rate:                   100
+  Duration:               0        ← infinito
   EffectsDurationOverride: True
 ```
 
-Al aplicarse, el target regenera vida progresivamente y se vuelve lento
-de forma indefinida hasta que la fuente sea cancelada.
-
 ---
 
-## BP_StateApplier — Blueprint central
+## BP_StateApplier — Blueprint Function Library
+
+**Tipo:** Blueprint Function Library
+**Estado:** Creado y compilando — pendientes menores (ver deuda técnica)
 
 ### Propósito
 
 Punto de entrada único para aplicar un Estado a cualquier target desde
-cualquier fuente del juego.
+cualquier fuente del juego. Al ser Function Library, se llama directamente
+sin instanciar ningún actor en el mundo.
 
-### Inputs esperados
+> **Nota crítica:** BP_StateApplier NO debe ser un Actor. Intentar usarlo como
+> Actor (via Spawn Actor) congela el editor de Unreal. Debe ser siempre
+> Blueprint Function Library.
 
-| Input | Tipo | Descripción |
+### Función: ApplyState
+
+**Inputs:**
+
+| Parámetro | Tipo | Descripción |
 |---|---|---|
 | `StateRowHandle` | DataTableRowHandle | Fila del Estado en DT_States |
 | `Target` | Actor Object Reference | Actor que recibirá los efectos |
 | `Instigator` | Actor Object Reference | Actor que origina la aplicación (puede ser null) |
 
-### Flujo interno (diseño — pendiente implementación Fase 1)
+### Flujo interno confirmado
 
 ```
 Entry (StateRowHandle, Target, Instigator)
-  → Get Data Table Row (DT_States, StateRowHandle) → STR_StateData
-  → Random Integer in Range (0, 100) <= Rate
-      → Branch (pasa Rate)
-          False → Return (no aplica nada)
-          True  →
-            For Each Loop (Effects array)
-              → Get Data Table Row (DT_StatusEffects, Array Element)
-                  → Break STR_StatusEffectInstance → Duration (del efecto)
-              → Branch (EffectsDurationOverride)
-                  True  → usar Duration de STR_StateData
-                  False → usar Duration de STR_StatusEffectInstance
-              → Cast To BP_Character_Player (Target)
-                  → Get AbilitySystemComponent
-                  → Make STR_SaveData_StatusEffect
-                      Effect Handle: Array Element
-                      Instigator Is Owner: False
-                      Stack: 1
-                      Time Remaining: Duration (resultado del Branch)
-                  → Load Status Effect (Target: AbilitySystemComponent, Save Data)
+  → Break DataTableRowHandle (StateRowHandle)
+      → Data Table, Row Name
+  → Get Data Table Row (DT_States)
+      Row Not Found → Return Node
+      Row Found →
+          Break STR_StateData
+            → Effects, IsHitEffect, Rate, Duration, EffectsDurationOverride
+          Random Integer in Range (0, 100)
+          <= Rate (Float to Int)
+          → Branch
+              False → Return Node
+              True  →
+                For Each Loop (Effects)
+                  Loop Body →
+                    Break DataTableRowHandle (Array Element)
+                      → Data Table, Row Name
+                    Get Data Table Row (DT_StatusEffects)
+                      Row Found →
+                        Break STR_StatusEffectInstance → Duration
+                        Select (Float)
+                          False  → Duration de STR_StatusEffectInstance
+                          True   → Duration de STR_StateData
+                          Index  → EffectsDurationOverride
+                        Cast To BP_Character_Player (Target)
+                          Then →
+                            Get Ability System Component
+                            Make STR_SaveData_StatusEffect
+                              Effect Handle:      Array Element
+                              Instigator Is Owner: False
+                              Stack:              1
+                              Time Remaining:     Return Value del Select ← ⚠️ PENDIENTE CONECTAR
+                            Load Status Effect
+                              Target:    Ability System Component
+                              Save Data: STR Save Data Status Effect
 ```
 
-### Estado de implementación
+---
 
-| Componente | Estado |
-|---|---|
-| DT_States | ⏳ Pendiente — Fase 1 |
-| STR_StateData | ⏳ Pendiente — Fase 1 |
-| BP_StateApplier | ⏳ Pendiente — Fase 1 |
-| Integración triggers | ⏳ Pendiente — Fase 1 |
-| Integración enemigo | ⏳ Pendiente — Fase 1 |
-| Fix Time Remaining hardcodeado | ⏳ Pendiente — Fase 1 |
+## BP_PoisonTrigger — Estado actual
+
+**Estructura confirmada via captura:**
+
+```
+On Component Begin Overlap (Box)
+  → Cast To BP_Character_Player (Other Actor)
+      Cast Failed → [termina]
+      Then →
+        Apply State (BP_StateApplier)         ← ⚠️ pins sin conectar — pendiente
+          State Row Handle: Make DataTableRowHandle
+            Data Table: DT_States
+            Row Name:   State_Poison
+          Target:     [sin conectar — debe ser As BP Character Player]
+          Instigator: [sin conectar]
+        → Destroy Actor (self)
+```
+
+> **Nota:** El nodo `Apply State` ya está en el graph y conectado en exec.
+> Faltan conectar los pins de datos: `State Row Handle`, `Target` e `Instigator`.
 
 ---
 
@@ -168,13 +216,15 @@ Cancelación desde otros contextos queda fuera del alcance actual.
 
 ## Plan de fases
 
-### Fase 1 — DT_States + BP_StateApplier base ⏳
-- Crear `STR_StateData` (Row Struct)
-- Crear `DT_States`
-- Crear `BP_StateApplier`
-- Actualizar `BP_PoisonTrigger` y `BP_SlowTrigger`
-- Actualizar enemigo
-- Fix `Time Remaining` hardcodeado en todos los puntos
+### Fase 1 — DT_States + BP_StateApplier base 🔄 En progreso
+- ✅ `STR_StateData` creado
+- ✅ `DT_States` creado con fila `State_Poison`
+- ✅ `BP_StateApplier` (Function Library) creado y compilando
+- ⚠️ Pin `Time Remaining` sin conectar en `Make STR_SaveData_StatusEffect`
+- ⚠️ `BP_PoisonTrigger` — pins `State Row Handle`, `Target`, `Instigator` sin conectar
+- ⏳ `BP_SlowTrigger` pendiente de actualizar
+- ⏳ Enemigo pendiente de actualizar
+- ⏳ `State_Slow` pendiente de crear en DT_States
 
 **Estable cuando:** Triggers y enemigo aplican efectos vía BP_StateApplier sin nodos manuales.
 
@@ -216,13 +266,15 @@ Cancelación desde otros contextos queda fuera del alcance actual.
 
 | Problema | Notas | Estado |
 |---|---|---|
-| `Time Remaining` hardcodeado en BP_PoisonTrigger y BP_SlowTrigger | Fix incluido en Fase 1 via BP_StateApplier | ⏳ Fase 1 |
-| `STR_ItemData` sin inspeccionar | Crítico para Fase 4 | ⏳ Fase 3 |
-| Mecanismo de remoción de Status Effects sin confirmar | Inspeccionar Effect_Bleeding + item de cura en ESRPGv5 | ⏳ Fase 3 |
-| Campo de Estados en ítem de runa sin definir | Depende de inspección de STR_ItemData | ⏳ Fase 3 |
+| `Time Remaining` sin conectar en BP_StateApplier | Pin `Time Remaining` del `Make STR_SaveData_StatusEffect` debe conectarse al `Return Value` del nodo `Select` | ⚠️ Próxima sesión |
+| `BP_PoisonTrigger` pins sin conectar | `State Row Handle` → `Make DataTableRowHandle`. `Target` → `As BP Character Player`. `Instigator` → sin conectar por ahora | ⚠️ Próxima sesión |
+| `BP_SlowTrigger` sin actualizar | Mismo proceso que BP_PoisonTrigger — crear `State_Slow` en DT_States primero | ⏳ Fase 1 |
+| Enemigo sin actualizar | Reemplazar nodos manuales en `Trace Deal Damage` por llamada a `Apply State` | ⏳ Fase 1 |
+| `State_Slow` no existe en DT_States | Crear fila siguiendo el mismo patrón que `State_Poison` | ⏳ Fase 1 |
+| BP_StateApplier fue Actor antes de Function Library | Usar como Actor via Spawn Actor congela el editor — confirmado. Siempre debe ser Function Library | ✅ Resuelto |
 
 ---
 
-*Archivo creado — sesión Light Paradox*
-*Sistema: States — capa central de aplicación de efectos*
+*Archivo actualizado — sesión Light Paradox (Fase 1 en progreso)*
+*Cambios: STR_StateData, DT_States, BP_StateApplier y BP_PoisonTrigger documentados con estado actual*
 *Project: Light Paradox · Base: EasySurvivalRPGv5 · UE 5.4.4*
