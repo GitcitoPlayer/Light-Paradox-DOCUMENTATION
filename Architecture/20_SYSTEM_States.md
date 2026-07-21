@@ -45,11 +45,11 @@ Asset: `STR_StateData`
 | Campo | Tipo | Descripción |
 |---|---|---|
 | `Effects` | Array de DataTableRowHandle | Filas de `DT_StatusEffects` que componen este Estado. Un Estado puede contener N efectos. |
-| `IsHitEffect` | Boolean | Propiedad de diseño. True = Estado ofensivo, se aplica al golpear. False = Estado pasivo, se aplica al portador o por evento. No es un filtro de código — es una convención de diseño que condiciona qué flujo del enemigo lo ejecuta. |
+| `IsHitEffect` | Boolean | Propiedad de diseño. True = Estado ofensivo, se aplica al golpear. False = Estado pasivo, se aplica al portador o por evento. No es un filtro de código — es una convención de diseño. |
 | `Rate` | Float (0–100) | Probabilidad porcentual de que el Estado se ejecute al activarse. 100 = siempre se aplica. |
 | `Duration` | Float | Duración en segundos. Usado cuando EffectsDurationOverride = True. 0 = infinito. |
 | `EffectsDurationOverride` | Boolean | True = usar Duration de este Estado para todos los efectos, ignorando sus duraciones individuales en DT_StatusEffects. False = cada efecto usa su propia Duration. |
-| `IsPermanent` | Boolean | True = el Estado no expira. Time Remaining se pasa como 0.0. Persiste hasta que la fuente lo cancele explícitamente. Ignora Duration y EffectsDurationOverride. |
+| `IsPermanent` | Boolean | True = el Estado no expira. Time Remaining se pasa como 0.0. Persiste hasta que la fuente lo cancele explícitamente. |
 | `AffectedFactions` | Array de E_Faction | Facciones que pueden recibir este Estado. Si el array está vacío = afecta a cualquier actor. |
 
 ### Semántica de IsHitEffect confirmada
@@ -59,17 +59,6 @@ Asset: `STR_StateData`
 | **Runa equipada** | Efecto se aplica al jugador portador | Efecto se aplica a lo que el jugador golpea |
 | **Enemigo** | Efecto se aplica al propio enemigo en Init Character | Efecto se aplica al actor golpeado en Trace Deal Damage |
 | **Trigger de zona** | Efecto se aplica al actor que entra | N/A — triggers usan False por diseño |
-
-> **Nota crítica:** `IsHitEffect` no es evaluado dentro de `BP_StateApplier`.
-> Es una propiedad de diseño que el Blueprint del enemigo (u otra fuente) lee
-> para decidir en qué momento llamar a `ApplyState` y con qué Target.
-
-### Notas de diseño
-
-- Un Estado con `Duration = 0` y `EffectsDurationOverride = True` produce efectos infinitos.
-- `IsPermanent = True` tiene prioridad sobre `EffectsDurationOverride` y `Duration`.
-- `AffectedFactions` vacío = sin restricción — afecta a cualquier actor.
-- Múltiples efectos en un Estado se aplican simultáneamente al mismo target.
 
 ---
 
@@ -124,7 +113,6 @@ Entry (StateRowHandle, Target, Instigator)
                     Break DataTableRowHandle (Array Element)
                     Get Data Table Row (DT_StatusEffects)
                       Row Found →
-                        Break STR_StatusEffectInstance → Duration
                         Cast To BP_Character_Base (Target)
                           Then →
                             Get Faction
@@ -138,260 +126,175 @@ Entry (StateRowHandle, Target, Instigator)
                                         False → [sin acción]
 
                 [aplicar efecto]
-                  Select 1 (Float)
-                    False → Duration de STR_StatusEffectInstance
-                    True  → Duration de STR_StateData
-                    Index → EffectsDurationOverride
-                  Select 2 (Float)
-                    False → Return Value de Select 1
-                    True  → 0.0
-                    Index → IsPermanent
-                  Get Ability System Component (de As BP Character Base)
+                  Select 1 (Float) — EffectsDurationOverride
+                  Select 2 (Float) — IsPermanent → 0.0
+                  Get Ability System Component
                   Make STR_SaveData_StatusEffect
-                    Effect Handle:       Array Element
-                    Instigator Is Owner: False
-                    Stack:               1
-                    Time Remaining:      Return Value de Select 2
                   Load Status Effect
-                    Target:    Ability System Component
-                    Save Data: STR Save Data Status Effect
-                  [exec de Load Status Effect sin conexión — loop avanza solo]
+                  [exec sin conexión — loop avanza solo]
 
                 Completed → Return Node
 ```
-
-### Notas de implementación
-
-- `AffectedFactions` es tipo `Array de E_Faction` — `CONTAINS` compara valores de enum directamente.
-- El exec de salida de `Load Status Effect` va sin conexión — el loop avanza automáticamente.
-- Conectar el exec de vuelta al loop causa ciclo infinito y congela el editor.
-- `Enum to Name` devuelve `NewEnumerator0` — NO usar. Usar `Enum to String`.
 
 ---
 
 ## E_Faction — confirmado
 
-Variable en `BP_Character_Base` — categoría Settings/AI — tipo `E_Faction`.
+Variable en `BP_Character_Base` — categoría Settings/AI.
 
 | Display Name |
 |---|
-| `Player` |
-| `Undead` |
-| `SmallAnimals` |
-| `Human` |
-| `Chickens` |
-| `Pigs` |
+| `Player` / `Undead` / `SmallAnimals` / `Human` / `Chickens` / `Pigs` |
 
 ---
 
 ## Integración con enemigos — BP_Character_Undead2
 
 ### Variable BaseState
+- Tipo: `DataTableRowHandle` — Instance Editable — Category: `Customization`
 
-| Propiedad | Valor |
-|---|---|
-| Nombre | `BaseState` |
-| Tipo | `DataTableRowHandle` |
-| Instance Editable | ✅ |
-| Category | `Customization` |
+### Init Character — aplica Estado cuando IsHitEffect = False
+### Trace Deal Damage — aplica Estado cuando IsHitEffect = True
 
-### Init Character
-
-```
-[después de Create Mark]
-  → Get Data Table Row (BaseState)
-      Row Not Found → Return Node
-      Row Found →
-          Break STR_StateData → IsHitEffect
-          → Branch
-              True  → Return Node
-              False →
-                Item Handle Is Valid (BaseState)
-                → Branch
-                    False → Return Node
-                    True  → Apply State (Target: Self) → Return Node
-```
-
-### Trace Deal Damage
-
-```
-[después de Apply Advanced Point Damage]
-  → Cast To BP_Character_Base (Damaged Actor)
-      Cast Failed → Play Sound at Location
-      Then →
-        Get Data Table Row (BaseState)
-          Row Found →
-              Break STR_StateData → IsHitEffect
-              → Branch
-                  False → [sin acción]
-                  True  → Apply State (Target: As BP Character Base)
-```
-
-> **Nota crítica:** `Cast Failed` debe ir a `Play Sound at Location` — conectarlo
-> a Apply State causa error de garbage collection en BP_AbilitySystemComponent.
+> Cast Failed en Trace Deal Damage debe ir a Play Sound at Location —
+> conectarlo a Apply State causa error de garbage collection.
 
 ---
 
 ## Triggers de prueba
 
 ### StateTrigger
-
 ```
-On Component Begin Overlap (Box)
-  → Cast To BP_Character_Base (Other Actor)
-      Cast Failed → [termina]
-      Then → Apply State → Destroy Actor (self)
+On Component Begin Overlap → Cast To BP_Character_Base → Apply State → Destroy Actor
 ```
 
-### BP_SlowTrigger
-Mismo patrón. Row Name: `State_Freeze`.
+### BP_SlowTrigger — Row Name: `State_Freeze`
 
 ---
 
-## Arquitectura de ítems de ESRPGv5 — documentado en Fase 3
+## Arquitectura de ítems de ESRPGv5
 
 ### STR_ItemInstance vs STR_ItemData
-
-`DT_Items` usa `STR_ItemInstance` como Row Struct.
-`STR_ItemData` es la representación del ítem en runtime.
 
 | Campo | STR_ItemInstance | STR_ItemData |
 |---|---|---|
 | Todos los campos base | ✅ | ✅ |
-| `Amount` | ❌ | ✅ |
-| `Charges` | ❌ | ✅ |
-| `Durability` | ❌ | ✅ |
-| `Decay` | ❌ | ✅ |
+| `Amount`, `Charges`, `Durability`, `Decay` | ❌ | ✅ |
 
-> **⚠️ Inferencia:** `STR_ItemInstance` es la definición estática en DT_Items.
-> `STR_ItemData` es la representación runtime con valores dinámicos.
-> Requiere inspección futura para confirmar dónde se construye `STR_ItemData`
-> desde `STR_ItemInstance`.
+> **⚠️ Inferencia:** STR_ItemInstance = definición estática en DT_Items.
+> STR_ItemData = representación runtime con valores dinámicos.
 
 El campo `ItemStates` fue agregado a **ambos structs**.
 
-### Dos rutas de funcionamiento para ítems usables
+### Dos rutas de ítems usables
 
-#### Ruta A — Handles → DT_Abilities → DT_StatusEffects
-**Ejemplo:** `Component_Corn`
-
-```
-DT_Items (Component_Corn)
-  Handles → "Ability" → DT_Abilities / Ability_Corn
-    AbilityClass: BP_Ability_Base
-    Handles → "StatusEffect" → DT_StatusEffects / Effect_Corn
-      → Aplica efecto por duración (Health + Hunger por segundo)
-```
-
-- Usa `BP_Ability_Base` como clase de habilidad
-- El efecto se aplica a lo largo del tiempo via Status Effect
-- Configurable completamente desde DataTables sin tocar Blueprints
-
-#### Ruta B — UseAbilityClass directo
-**Ejemplo:** `Usable_RedDrink`
-
-```
-DT_Items (Usable_RedDrink)
-  UseAbilityClass: BP_Ability_ChangeState_RedDrink
-    Change State Instantly:
-      Health: 0.25 (25% del MaxHealth)
-      Health Percent: True
-```
-
-- Usa una clase de habilidad específica con lógica hardcodeada
-- El efecto es instantáneo — modifica atributos directamente sin Status Effect
-- Requiere un Blueprint por cada variante de comportamiento
-
-> **Nota:** Ninguna de las dos rutas incluye mecanismo de cancelación de efectos.
-> ESRPGv5 no tiene ítems que remuevan Status Effects activos.
+**Ruta A — Handles → DT_Abilities → DT_StatusEffects:** Corn (efecto por duración)
+**Ruta B — UseAbilityClass directo:** RedDrink (cambio instantáneo de atributos)
 
 ---
 
 ## Sistema de atributos de equipamiento — ESRPGv5
 
-### Cómo funciona EquipmentAttributes en ítems cosméticos
+### EquipmentChanged en BP_Character_Player
 
-Cuando el jugador equipa un ítem (incluyendo runas), `BP_Character_Player`
-ejecuta la función `EquipmentChanged` que sigue este flujo:
+Función que se ejecuta cuando cambia un slot de equipamiento.
 
 ```
 EquipmentChanged (Equipment Slot, Slot, Item)
-  → SET Local Item
-  → SET Local Equipment Slot
-  → Switch on E_EquipmentSlot
-      → Actualiza mesh correspondiente (Head, Body, Pants, Hands, Feet,
-        Backpack, Tool, HeadRuneWord, BodyRuneWord, etc.)
+  → SET Local Item / Local Equipment Slot
+  → Switch on E_EquipmentSlot → actualiza meshes
   → Update Footstep Settings
-  → Get Equipment Items (Equipment Container)
-      → Equiped Items
-      → Exclude Broken Items
-          → Result Items
-          → Get Items Equipment Attributes
-              → Equipment Attributes (array combinado de TODOS los ítems equipados)
-              → Update Equipment Attributes (Target: Attributes Component)
-```
-
-**Patrón clave:** ESRPGv5 recalcula **todos** los atributos de **todos** los ítems
-equipados en cada cambio — no solo el ítem que cambió. Esto evita
-desincronización acumulativa.
-
-### Punto de entrada para Estados de runas (Fase 4)
-
-La lógica de Estados de runas debe agregarse **después de `Update Equipment Attributes`**
-en `EquipmentChanged`, siguiendo el mismo patrón de "recalcular todo":
-
-```
-[después de Update Equipment Attributes]
-  → Clear States de runas (remover todos los efectos activos de runas)
   → Get Equipment Items → Exclude Broken Items
-  → For Each Loop (Result Items)
-      → Get Data Table Row (Item.ItemHandle → DT_Items)
-          → Break STR_ItemInstance → ItemStates
-          → For Each Loop (ItemStates)
-              → Apply State (Array Element, Target: Self)
+      → Get Items Equipment Attributes
+          → Update Equipment Attributes (Attributes Component)
+  → [NUEVO — Estados de runas, ver abajo]
 ```
 
-> **⚠️ Pendiente:** Confirmar si `ClearStatusEffects` en `BP_AbilitySystemComponent`
-> borra absolutamente todos los efectos o permite filtrar por fuente. Si borra todo,
-> necesitamos un mecanismo alternativo de tracking de efectos de runas.
-
-### Dispatchers y eventos relevantes en BP_EquipmentComponent
-
-| Dispatcher / Evento | Descripción |
-|---|---|
-| `OnEquipmentChanged` | Se dispara cuando cambia el equipamiento |
-| `OnSlotItemChanged_Event` | Custom Event — recibe `Slot` (Integer) e `Item` nuevo |
-
-`OnSlotItemChanged_Event` solo pasa el ítem nuevo — no el anterior.
-Por esto el patrón de "recalcular todo" es preferible al de "remover anterior / aplicar nuevo".
+**Patrón clave de ESRPGv5:** recalcula todos los atributos de todos los ítems
+equipados en cada cambio — no solo el ítem que cambió.
 
 ---
 
-## Mecanismo de remoción de Status Effects — confirmado
+## Estados en Rune Words — Fase 4
+
+### Structs y variables nuevas
+
+**STR_RuneStateHandles** (struct nuevo)
+- `Handles`: Array de DataTableRowHandle
+
+**ActiveRuneStates** en BP_Character_Player
+- Tipo: Map (Integer → STR_RuneStateHandles)
+- Category: `State`
+- Propósito: guardar los handles de efectos activos por slot de runa
+
+### Flujo implementado en EquipmentChanged
+
+```
+[después de Update Equipment Attributes]
+
+BLOQUE A — Remover Estados de runa anterior:
+  FIND (ActiveRuneStates, Key: Slot)
+    → Break STR_RuneStateHandles → Handles
+    → For Each Loop
+        Loop Body → Remove Status Effect By Handle (Array Element)
+        Completed → Branch (Item Is Valid)
+
+BLOQUE B — Aplicar Estados de runa nueva:
+  Branch
+    False → REMOVE (ActiveRuneStates, Key: Slot) → [fin]
+    True  →
+        Break STR_ItemData (Item del input)
+          → Item States → For Each Loop
+              Loop Body →
+                Apply State (State Row Handle: Array Element, Target: Self)
+                → Add (Array: Handles del FIND)
+                → Add (Map: ActiveRuneStates, Key: Slot, Value: Make STR_RuneStateHandles)
+              Completed → [fin]
+```
+
+### Estado de implementación
+
+| Componente | Estado |
+|---|---|
+| `STR_RuneStateHandles` | ✅ Creado |
+| `ActiveRuneStates` en BP_Character_Player | ✅ Creado |
+| Bloque A — Remove en EquipmentChanged | ✅ Implementado |
+| Bloque B — Apply en EquipmentChanged | ✅ Implementado |
+| Prueba funcional | ❌ Sin efecto visible — bug pendiente |
+
+### Bug pendiente — Estados de runa no se aplican
+
+**Síntoma:** Al equipar una runa con `ItemStates` configurado, no se aplica ningún efecto. No hay errores en el log.
+
+**Hipótesis a investigar en próxima sesión:**
+1. `EquipmentChanged` en `BP_Character_Player` no se está llamando al equipar runas desde el sistema de UI actual
+2. `ItemStates` en `STR_ItemData` no está siendo leído correctamente — posible problema de que el pin `Item` de `EquipmentChanged` es `STR_ItemData` pero los `ItemStates` viven en `STR_ItemInstance`
+3. El slot de runa no está siendo reconocido como un slot de equipamiento válido en el flujo de `EquipmentChanged`
+
+**Plan de diagnóstico para próxima sesión:**
+1. Agregar `Print String` después de `Update Equipment Attributes` para confirmar que `EquipmentChanged` se ejecuta al equipar runas
+2. Agregar `Print String` dentro del segundo `For Each Loop` para confirmar que `ItemStates` tiene elementos
+3. Con esa información identificar exactamente dónde se rompe el flujo
+
+---
+
+## Mecanismo de remoción de Status Effects
 
 Asset: `BP_AbilitySystemComponent`
 
-| Función | Descripción | Uso para runas |
-|---|---|---|
-| `ClearStatusEffects` | Elimina todos los efectos activos del owner | ⚠️ Pendiente confirmar si filtra por fuente |
-| `RemoveStatusEffectByHandle` | Elimina un efecto específico por su Handle | ✅ Correcto para remoción individual |
-| `RemoveStatusEffectByID` | Elimina un efecto específico por su ID | 🟡 Alternativa posible |
+| Función | Uso |
+|---|---|
+| `ClearStatusEffects` | Destruye TODOS los efectos — no usar para runas |
+| `RemoveStatusEffectByHandle` | ✅ Correcto — remueve efecto específico por handle |
+| `RemoveStatusEffectByID` | Alternativa posible |
 
-### Flujo interno de RemoveStatusEffectByHandle
-
+### ClearStatusEffects — flujo confirmado
 ```
-RemoveStatusEffectByHandle (Effect Handle)
-  → SET Local Status Effects = Active Status Effects
-  → For Each Loop (Local Status Effects)
-      → Break STR_StatusEffectInstance → Handle
-      → Handles Are Equals (Handle1: Array Element, Handle2: Effect Handle)
-          → Branch
-              True  → Destroy Actor → Return Node (Success: true)
-              False → [continúa loop]
-  Completed → Return Node (Success: false)
+SET Local Effects = Active Status Effects
+For Each Loop → Destroy Actor (cada efecto)
+Completed → Return Node (Success: true)
 ```
-
-**Input:** `Effect Handle` — DataTableRowHandle apuntando a fila de `DT_StatusEffects`
+No filtra por fuente — destruye absolutamente todo.
 
 ---
 
@@ -414,22 +317,8 @@ Terror, Confundir, Cegar
 ### Fase 2 — IsHitEffect como filtro de diseño ✅
 ### Fase 3 — Inspección STR_ItemData + mecanismo de remoción ✅
 ### Fase 4 — Estados en Rune Words ⏳
-
-**Decisión arquitectural confirmada:**
-- Punto de entrada: función `EquipmentChanged` en `BP_Character_Player`
-- Patrón: "recalcular todo" — igual que `Update Equipment Attributes`
-- Pendiente: confirmar comportamiento de `ClearStatusEffects` antes de construir
-
-**Flujo objetivo:**
-```
-EquipmentChanged
-  → [cadena existente]
-  → Update Equipment Attributes  ← ya existe
-  → Clear States de runas        ← nuevo
-  → For Each Loop (ítems equipados)
-      → For Each Loop (ItemStates del ítem)
-          → Apply State (Target: Self)  ← nuevo
-```
+- Implementación completa ✅
+- Bug de no aplicación pendiente de diagnóstico ⏳
 
 ---
 
@@ -439,8 +328,7 @@ EquipmentChanged
 |---|---|
 | BaseState en BP_Character_Base | Evaluar migración para todos los personajes | ⏳ |
 | Estados en consumibles | Pospuesto — uso ambiguo | ⏳ |
-| Cancelación de efectos desde contextos arbitrarios | Demasiado abierto | ⏳ |
-| Confirmar diferencia exacta STR_ItemInstance vs STR_ItemData | Requiere inspección del flujo runtime | ⏳ |
+| Confirmar diferencia STR_ItemInstance vs STR_ItemData en runtime | ⏳ |
 
 ---
 
@@ -448,14 +336,13 @@ EquipmentChanged
 
 | Problema | Notas | Estado |
 |---|---|---|
-| Error de stack duplicado en Load Status Effect | "BP_StatusEffect_TickDamage_C_1 is not valid" — ocurre cuando el efecto ya está activo y se aplica de nuevo. No destructivo. Origen en BP_AbilitySystemComponent. | ⚠️ Pendiente |
+| Error de stack duplicado en Load Status Effect | No destructivo. Origen en BP_AbilitySystemComponent. | ⚠️ Pendiente |
 | BaseState solo en BP_Character_Undead2 | Evaluar migración a BP_Character_Base | ⏳ |
-| ClearStatusEffects sin inspeccionar | Crítico para Fase 4 — confirmar si filtra por fuente o borra todo | ⏳ Próxima sesión |
-| Diferencia STR_ItemInstance vs STR_ItemData sin confirmar | Inferencia documentada — requiere inspección del flujo runtime | ⏳ |
-| ItemStates agregado a ambos structs | Confirmar cuál es el correcto una vez resuelta la ambigüedad | ⏳ |
+| Bug — Estados de runa no se aplican al equipar | Sin errores en log. Diagnóstico pendiente con Print Strings. | 🔴 Próxima sesión |
+| ItemStates en STR_ItemInstance vs STR_ItemData | Confirmar cuál struct usa EquipmentChanged en runtime | ⏳ Relacionado con el bug |
 
 ---
 
-*Archivo actualizado — sesión Light Paradox (Fase 4 en progreso)*
-*Cambios: Sistema EquipmentChanged documentado, patrón de recalcular todo confirmado, punto de entrada para Estados de runas identificado, ClearStatusEffects pendiente de inspección*
+*Archivo actualizado — sesión Light Paradox (Fase 4 implementada, bug pendiente)*
+*Cambios: STR_RuneStateHandles documentado, ActiveRuneStates documentado, flujo completo de EquipmentChanged con bloques A y B, plan de diagnóstico del bug*
 *Project: Light Paradox · Base: EasySurvivalRPGv5 · UE 5.4.4*
