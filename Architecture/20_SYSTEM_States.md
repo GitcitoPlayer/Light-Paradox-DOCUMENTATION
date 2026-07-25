@@ -183,6 +183,8 @@ On Component Begin Overlap → Cast To BP_Character_Base → Apply State → Des
 
 > **⚠️ Inferencia:** STR_ItemInstance = definición estática en DT_Items.
 > STR_ItemData = representación runtime con valores dinámicos.
+> Requiere inspección futura para confirmar dónde se construye STR_ItemData
+> desde STR_ItemInstance.
 
 El campo `ItemStates` fue agregado a **ambos structs**.
 
@@ -197,8 +199,6 @@ El campo `ItemStates` fue agregado a **ambos structs**.
 
 ### EquipmentChanged en BP_Character_Player
 
-Función que se ejecuta cuando cambia un slot de equipamiento.
-
 ```
 EquipmentChanged (Equipment Slot, Slot, Item)
   → SET Local Item / Local Equipment Slot
@@ -207,11 +207,11 @@ EquipmentChanged (Equipment Slot, Slot, Item)
   → Get Equipment Items → Exclude Broken Items
       → Get Items Equipment Attributes
           → Update Equipment Attributes (Attributes Component)
-  → [NUEVO — Estados de runas, ver abajo]
+  → [NUEVO — Estados de runas]
 ```
 
-**Patrón clave de ESRPGv5:** recalcula todos los atributos de todos los ítems
-equipados en cada cambio — no solo el ítem que cambió.
+**Patrón clave:** recalcula todos los atributos de todos los ítems equipados
+en cada cambio — no solo el ítem que cambió.
 
 ---
 
@@ -262,39 +262,55 @@ BLOQUE B — Aplicar Estados de runa nueva:
 | Bloque B — Apply en EquipmentChanged | ✅ Implementado |
 | Prueba funcional | ❌ Sin efecto visible — bug pendiente |
 
-### Bug pendiente — Estados de runa no se aplican
+---
 
-**Síntoma:** Al equipar una runa con `ItemStates` configurado, no se aplica ningún efecto. No hay errores en el log.
+## Bug 1 — Estados de runa no se aplican al equipar
 
-**Hipótesis a investigar en próxima sesión:**
-1. `EquipmentChanged` en `BP_Character_Player` no se está llamando al equipar runas desde el sistema de UI actual
-2. `ItemStates` en `STR_ItemData` no está siendo leído correctamente — posible problema de que el pin `Item` de `EquipmentChanged` es `STR_ItemData` pero los `ItemStates` viven en `STR_ItemInstance`
-3. El slot de runa no está siendo reconocido como un slot de equipamiento válido en el flujo de `EquipmentChanged`
+**Síntoma:** Al equipar una runa con `ItemStates` configurado (`State_Poison`),
+no se aplica ningún efecto. No hay errores en el log.
 
-**Plan de diagnóstico para próxima sesión:**
-1. Agregar `Print String` después de `Update Equipment Attributes` para confirmar que `EquipmentChanged` se ejecuta al equipar runas
-2. Agregar `Print String` dentro del segundo `For Each Loop` para confirmar que `ItemStates` tiene elementos
-3. Con esa información identificar exactamente dónde se rompe el flujo
+**Diagnóstico realizado:**
+
+| Paso | Print String | Resultado |
+|---|---|---|
+| Después de Update Equipment Attributes | "EquipmentChanged ejecutado" | ✅ Aparece — función sí se ejecuta |
+| Dentro del segundo For Each Loop | "ItemState encontrado" | ❌ No aparece — loop no se ejecuta |
+| En el True del Branch (Item Is Valid) | "Item es valido" | ✅ Aparece — Branch llega al True |
+| Length de ItemStates array | Número | ❌ Siempre devuelve 0 |
+
+**Causa confirmada:** `ItemStates` llega con Length 0 al segundo `For Each Loop`.
+El array está vacío aunque el ítem tenga `ItemStates` configurado en `DT_Items`.
+
+**Hipótesis de causa raíz:**
+El pin `Item` de `EquipmentChanged` es de tipo `STR_ItemData`. El campo `ItemStates`
+fue agregado a `STR_ItemInstance` (el Row Struct de `DT_Items`) pero puede que
+`STR_ItemData` en runtime no incluya ese campo — o que el struct se construya
+desde `STR_ItemInstance` sin propagar el campo nuevo.
+
+**Próximo paso de diagnóstico:**
+Inspeccionar cómo se construye el `STR_ItemData` que llega al pin `Item` de
+`EquipmentChanged` — específicamente si se copia desde `STR_ItemInstance` y
+si el campo `ItemStates` está siendo propagado correctamente.
 
 ---
 
-## Mecanismo de remoción de Status Effects
+## Bug 2 — Segundo slot de runa no aplica atributos de equipamiento
 
-Asset: `BP_AbilitySystemComponent`
+**Síntoma:** Al desbloquear el segundo slot de runa (HeadRuneSlot_1) y colocar
+la misma runa, los `EquipmentAttributes` no se aplican. Solo aparece el
+debug log "No es runa" en pantalla.
 
-| Función | Uso |
-|---|---|
-| `ClearStatusEffects` | Destruye TODOS los efectos — no usar para runas |
-| `RemoveStatusEffectByHandle` | ✅ Correcto — remueve efecto específico por handle |
-| `RemoveStatusEffectByID` | Alternativa posible |
+**Contexto:** El primer slot funciona correctamente — suma y resta atributos.
+El segundo slot falla en aplicar atributos y muestra el mensaje de debug
+"No es runa" que es un Print String temporal en `UI_ItemSlot.OnDrop`.
 
-### ClearStatusEffects — flujo confirmado
-```
-SET Local Effects = Active Status Effects
-For Each Loop → Destroy Actor (cada efecto)
-Completed → Return Node (Success: true)
-```
-No filtra por fuente — destruye absolutamente todo.
+**Hipótesis:** El sistema de detección de runas en `OnDrop` no está
+reconociendo el slot como válido para runas, o el índice del segundo slot
+no está siendo manejado correctamente en la cadena de validación.
+
+**Estado:** ⏳ Pendiente — prioridad menor al Bug 1.
+Requiere inspección de `UI_ItemSlot.OnDrop` y la lógica de detección
+de runas por Gameplay Tag.
 
 ---
 
@@ -318,7 +334,8 @@ Terror, Confundir, Cegar
 ### Fase 3 — Inspección STR_ItemData + mecanismo de remoción ✅
 ### Fase 4 — Estados en Rune Words ⏳
 - Implementación completa ✅
-- Bug de no aplicación pendiente de diagnóstico ⏳
+- Bug 1 pendiente de resolución 🔴
+- Bug 2 pendiente documentado ⏳
 
 ---
 
@@ -328,7 +345,7 @@ Terror, Confundir, Cegar
 |---|---|
 | BaseState en BP_Character_Base | Evaluar migración para todos los personajes | ⏳ |
 | Estados en consumibles | Pospuesto — uso ambiguo | ⏳ |
-| Confirmar diferencia STR_ItemInstance vs STR_ItemData en runtime | ⏳ |
+| Confirmar diferencia STR_ItemInstance vs STR_ItemData en runtime | ⏳ Relacionado con Bug 1 |
 
 ---
 
@@ -338,11 +355,12 @@ Terror, Confundir, Cegar
 |---|---|---|
 | Error de stack duplicado en Load Status Effect | No destructivo. Origen en BP_AbilitySystemComponent. | ⚠️ Pendiente |
 | BaseState solo en BP_Character_Undead2 | Evaluar migración a BP_Character_Base | ⏳ |
-| Bug — Estados de runa no se aplican al equipar | Sin errores en log. Diagnóstico pendiente con Print Strings. | 🔴 Próxima sesión |
-| ItemStates en STR_ItemInstance vs STR_ItemData | Confirmar cuál struct usa EquipmentChanged en runtime | ⏳ Relacionado con el bug |
+| Bug 1 — ItemStates siempre llega vacío en EquipmentChanged | Length = 0 confirmado. Probable desincronización entre STR_ItemInstance y STR_ItemData en runtime. Próximo paso: inspeccionar cómo se construye STR_ItemData. | 🔴 Alta prioridad |
+| Bug 2 — Segundo slot de runa no aplica atributos | Debug log "No es runa" aparece. Probable problema en detección de Gameplay Tag en OnDrop de UI_ItemSlot. | ⏳ Prioridad menor |
+| Print String "No es runa" debug temporal en UI_ItemSlot.OnDrop | Pendiente eliminar cuando se resuelva Bug 2 | ⏳ |
 
 ---
 
-*Archivo actualizado — sesión Light Paradox (Fase 4 implementada, bug pendiente)*
-*Cambios: STR_RuneStateHandles documentado, ActiveRuneStates documentado, flujo completo de EquipmentChanged con bloques A y B, plan de diagnóstico del bug*
+*Archivo actualizado — sesión Light Paradox (Bug 1 y Bug 2 documentados)*
+*Cambios: Diagnóstico de Bug 1 completado hasta Length=0, Bug 2 registrado, próximos pasos definidos*
 *Project: Light Paradox · Base: EasySurvivalRPGv5 · UE 5.4.4*
