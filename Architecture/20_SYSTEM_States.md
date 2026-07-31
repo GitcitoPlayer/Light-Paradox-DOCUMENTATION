@@ -37,6 +37,15 @@ efectos en cualquier contexto del juego.
         → Guarda Effect Handle aplicado en output Applied Effect Handles
 ```
 
+> **Nota de arquitectura confirmada esta sesión:** `DT_States.Effects` ya es
+> un array de `DataTableRowHandle` apuntando a `DT_StatusEffects` — es decir,
+> `ApplyState` resuelve la capa de State internamente. Lo que finalmente se
+> registra en `Active Status Effects` (y lo que se compara al remover) es
+> siempre el **Effect Handle**, nunca el State Handle, sin importar si el
+> disparador original fue un State (`BP_StateApplier`) o un Effect aplicado
+> de forma directa (patrón `BP_PoisonTrigger`). Ambos caminos son
+> compatibles entre sí para efectos de remoción manual.
+
 ---
 
 ## STR_StateData — Row Struct
@@ -70,8 +79,9 @@ Asset: `DT_States` — Row Struct: `STR_StateData`
 ## BP_StateApplier — Blueprint Function Library
 
 **Tipo:** Blueprint Function Library
-**Estado:** ✅ Funcional para aplicación. El output `AppliedEffectHandles` se
-confirmó funcional esta sesión (ver Bug 3 abajo).
+**Estado:** ✅ Funcional para aplicación. El output `AppliedEffectHandles`
+confirmado funcional (sesión anterior) y confirmado nuevamente como no
+relacionado al Bug 3 (esta sesión).
 
 > **Nota crítica:** BP_StateApplier NO debe ser un Actor.
 
@@ -101,12 +111,10 @@ Entry (StateRowHandle, Target, Instigator)
                 Completed → Return Node (Applied Effect Handles)
 ```
 
-> **✅ CONFIRMADO esta sesión:** en la primera aplicación de un Estado
-> (guard = False, efecto no estaba activo), `AppliedEffectHandles` SÍ llega
-> con longitud 1 (`PUNTO 1c - AppliedEffectHandles Length (raw): 1`,
-> confirmado por Print String directo sobre el output de `Apply State`,
-> antes de cualquier Append externo). **`ApplyState` no es la fuente del
-> Bug 3.**
+> **✅ CONFIRMADO:** en la primera aplicación de un Estado (guard = False,
+> efecto no estaba activo), `AppliedEffectHandles` sale con longitud 1
+> directamente del output de `Apply State`. **`ApplyState` no es ni fue la
+> fuente del Bug 3.**
 
 ---
 
@@ -117,7 +125,7 @@ Entry (StateRowHandle, Target, Instigator)
 **STR_RuneStateHandles** — `Handles`: Array de DataTableRowHandle
 **ActiveRuneStates** en BP_Character_Player — Map (Integer → STR_RuneStateHandles), Category: `State`
 
-### Flujo en EquipmentChanged
+### Flujo en EquipmentChanged (✅ actualizado con el fix del Bug 3)
 
 ```
 [después de Update Equipment Attributes]
@@ -137,8 +145,13 @@ BLOQUE B — Aplicar Estados de runa nueva:
             Loop Body →
               Apply State (State Row Handle: Array Element, Target: Self)
                 → Applied Effect Handles
-              → Append (Handles del FIND, Applied Effect Handles)
-              → Add (Map: ActiveRuneStates, Key: Slot, Value: Make STR_RuneStateHandles)
+              → Break STR_RuneStateHandles (del FIND) → Handles
+              → SET LocalHandlesToSave ← Handles (del Break)          ✅ FIX
+              → Append (Target Array: GET LocalHandlesToSave,
+                        Source: Applied Effect Handles)                ✅ FIX
+              → Make STR_RuneStateHandles
+                  Handles: GET LocalHandlesToSave                      ✅ FIX
+              → Add (Map: ActiveRuneStates, Key: Slot, Value: resultado del Make)
 ```
 
 ---
@@ -152,131 +165,128 @@ BLOQUE B — Aplicar Estados de runa nueva:
 
 ## Bug 2 — Segundo slot de runa no aplica atributos de equipamiento
 
-**Estado:** ⏳ Pendiente — prioridad menor, sin tocar.
+**Estado:** ⏳ Pendiente — prioridad para la próxima sesión, ahora que el Bug 3 está cerrado.
+**Síntoma:** Al desbloquear el segundo slot de runa (HeadRuneSlot_1) y colocar
+la misma runa, los `EquipmentAttributes` no se aplican. Aparece el debug log
+"No es runa" (Print String temporal en `UI_ItemSlot.OnDrop`).
+**Requiere:** inspección de `UI_ItemSlot.OnDrop` y la lógica de detección de
+runas por Gameplay Tag (`Does Container Match Tag Query`).
 
 ---
 
-## Bug 3 — El efecto no se remueve al desequipar la runa 🔴 ACTIVO — DIAGNÓSTICO AVANZADO
+## Bug 3 — El efecto no se remueve al desequipar la runa ✅ RESUELTO
 
-**Estado al cierre de esta sesión: 🔴 SIN RESOLVER, pero con causa raíz
-localizada con alta precisión mediante Print String + Output Log.**
+**Estado final: ✅ CONFIRMADO RESUELTO esta sesión**, con fix aplicado y
+verificado por el usuario en juego (el efecto de veneno se detiene
+correctamente al desequipar la runa, tanto en configuración permanente como
+no permanente).
 
-### Síntomas confirmados (sesiones previas, siguen vigentes)
+### Síntomas originales (ya no reproducibles tras el fix)
 
-| Configuración | Comportamiento observado |
+| Configuración | Comportamiento antes del fix |
 |---|---|
-| `IsPermanent = True` | Al quitar la runa, el efecto sigue activo indefinidamente. |
-| `IsPermanent = False` | El efecto no se detiene al desequipar — sigue corriendo hasta expirar por su propio Duration natural. Mientras la runa sigue puesta, el countdown se reinicia en loop (10→0→10) por el re-disparo automático de `EquipmentChanged`. |
+| `IsPermanent = True` | Al quitar la runa, el efecto seguía activo indefinidamente. |
+| `IsPermanent = False` | El efecto no se detenía al desequipar — seguía corriendo hasta expirar por su propio Duration natural. |
 
-### Diagnóstico ejecutado esta sesión — Print String en cadena, confirmado vía Output Log
+### Causa raíz confirmada — pure function reevaluada, no variable persistente
 
-Se instrumentaron los siguientes puntos de log (todos con `Print to Screen` +
-`Print to Log`, confirmados vía Output Log filtrado, no solo HUD en pantalla
-— el HUD reordena visualmente mensajes del mismo frame y no es confiable
-para diagnósticos de orden de ejecución):
+El pin `Handles` de dos nodos distintos en Bloque B —`APPEND` (Target Array)
+y `Make STR_RuneStateHandles` (pin `Handles`)— estaban conectados **ambos,
+por separado, directamente al mismo pin de salida** de
+`Break STR_RuneStateHandles`, una **función pura** (sin pines de exec).
 
-| Punto | Ubicación | Qué mide |
-|---|---|---|
-| PUNTO 1c | Justo después del exec-out de `Apply State`, antes de cualquier Append externo | Length de `AppliedEffectHandles` tal como sale crudo de `ApplyState` |
-| ADD REAL | Justo después del exec-out del nodo `ADD (Map)` real en Bloque B | Slot (Key) + Length de Handles que se está guardando |
-| FIND REMOVE | Justo antes del `For Each Loop` de Bloque A | Slot (Key) + Length de Handles que `FIND` devuelve |
-| REMOVE - Success | Dead-end después de `Remove Status Effect By Handle`, dentro de `Loop Body` | Si esta línea nunca aparece, el `For Each Loop` está iterando sobre array vacío |
-| EQCHANGED START | Primer nodo de `EquipmentChanged` | Slot + timestamp de cada disparo de la función |
-| MAP REMOVE EJECUTADO | Antes del nodo `REMOVE (Map)` en la rama False de Bloque A | Confirma si el Map se autoborra en cada ciclo automático |
+Una función pura no tiene memoria ni un único momento de evaluación: se
+re-ejecuta de forma independiente cada vez que un pin la consulta. Cuando
+`APPEND` tomaba ese `Handles` como su `Target Array` y agregaba el nuevo
+elemento, la modificación ocurría sobre una **copia temporal**, propia de esa
+ejecución de `APPEND` — no se guardaba en ningún lado persistente, porque el
+origen (`Break`) no era una variable real. Cuando `Make STR_RuneStateHandles`
+leía su propio `Handles` desde el mismo pin de `Break`, Unreal volvía a
+evaluar la función pura desde cero, trayendo el array **original, sin el
+elemento agregado por `Append`**. Por eso el struct guardado en
+`ActiveRuneStates` siempre llegaba con `Length: 0`, aunque `Append` reportara
+éxito.
 
-### Resultados confirmados (vía Output Log, filtro exacto por texto)
+### Fix aplicado
 
-1. **`Apply State` funciona correctamente en la primera aplicación:**
-   ```
-   PUNTO 1c - AppliedEffectHandles Length (raw): 1
-   ```
-   Confirmado en el primer equipamiento de la sesión de PIE. `ApplyState`
-   **no es la fuente del bug**.
+Se introdujo una **Local Variable** dentro de `EquipmentChanged`:
 
-2. **`EquipmentChanged` se dispara 2 veces por frame**, una por cada slot
-   afectado en el recálculo (ej. `Slot: 0` para el casco, `Slot: 7` para la
-   runa), y además se re-dispara automáticamente cada ~1s mientras el efecto
-   de daño por tick está activo (ya documentado en sesión anterior, causa
-   raíz aún no identificada — mitigado con guard en `ApplyState`, no
-   eliminado). Al filtrar por `Slot: 7` específicamente, se confirma un ciclo
-   repetido cada ~1s:
-   ```
-   ADD REAL     - Slot: 7 - Handles guardados: 1
-   FIND REMOVE  - Slot: 7 - Handles encontrados: 0
-   ```
-   Esto se repite consistentemente en cada ciclo, con la runa **todavía
-   puesta** — es decir, en el mismo `Slot`, en la misma clave del mismo Map
-   `ActiveRuneStates`, Bloque B reporta haber guardado `1` handle, y Bloque A
-   (evaluado en el ciclo siguiente) reporta encontrar `0`.
-
-3. **`Remove Status Effect By Handle` nunca se ejecuta** (confirmado — el
-   Print `REMOVE - Success: {0}` nunca imprime, ni al desequipar 1 vez ni 2
-   veces consecutivas). Esto es consistente con el punto 2: el `For Each
-   Loop` de Bloque A siempre itera sobre un array de longitud 0, por lo que
-   `Loop Body` nunca corre ni una sola vez.
-
-4. **`MAP REMOVE EJECUTADO` (el `REMOVE (Map)` en la rama `False` de
-   `Item Is Valid`) NO se ejecuta en loop** — solo se dispara cuando el
-   jugador de verdad desequipa la runa (1 vez si se desequipa 1 vez, 2 veces
-   si se desequipa 2 veces). Esto **descarta la hipótesis de que el Map se
-   autoborra en cada ciclo automático** mientras la runa sigue puesta. El
-   `REMOVE (Map)` real solo borra una entrada que, según el diagnóstico
-   punto 2, **ya llegaba vacía de antes** — es decir, es un no-op cosmético
-   en la práctica, no la causa del bug.
-
-### Conclusión de esta sesión
-
-El bug real vive en algún punto entre el momento en que Bloque B ejecuta
-`ADD (Map)` (que reporta éxito, `Handles guardados: 1`) y el momento en que
-Bloque A ejecuta `FIND (Map)` en el ciclo siguiente (que reporta
-`Handles encontrados: 0`) — sobre la **misma Key** (`Slot: 7`) del **mismo
-Map nominal** (`ActiveRuneStates`). Las hipótesis anteriores (Effect Handle
-incorrecto, comparación de Handles rota, autoborrado del Map en cada ciclo)
-quedan **descartadas o no confirmadas** por este diagnóstico. La hipótesis
-activa ahora es más fundamental: puede haber una desincronización a nivel de
-**qué variable `ActiveRuneStates` está siendo leída/escrita realmente**, o el
-struct guardado en el Map llega vacío por algún motivo no confirmado aún en
-la construcción de `Make STR_RuneStateHandles` dentro de Bloque B.
-
-### Nota sobre `Remove Status Effect from owner by handle` (función interna en BP_AbilitySystemComponent)
-
-Se inspeccionó esta función (la que ejecutaría `Remove Status Effect By
-Handle` si llegara a dispararse) y su lógica visual parece razonable: itera
-`Active Status Effects`, compara `Handle` vía `Handles Are Equals`, y si
-coincide hace `Destroy Actor` + `Return Node (Success: true)`. **Esta función
-es irrelevante para el Bug 3 en su estado actual**, porque el diagnóstico
-confirma que la llamada a `Remove Status Effect By Handle` desde
-`BP_Character_Player` nunca ocurre (array vacío en el `For Each Loop` que la
-contiene) — el problema está antes de llegar a esta función, no dentro de
-ella. No se requiere seguir revisando esta función hasta resolver la causa
-raíz en Bloque A/B.
-
-### Plan de diagnóstico pendiente para la próxima sesión
-
-**Paso inmediato — diferenciar "la Key no existe" de "la Key existe pero el
-array interno está vacío":**
-
-1. En Bloque A, junto al `FIND (ActiveRuneStates, Key: Slot)`, agregar un
-   nodo `Contains Key` sobre la misma variable `Active Rune States` con el
-   mismo `Slot` como Key.
-2. Convertir el resultado (bool) a String, imprimir:
-   `"CONTAINS KEY - Slot: {0} - Existe: {1}"`.
-3. Insertar en paralelo al print `FIND REMOVE` ya existente, antes del `For
-   Each Loop`.
-4. Probar: equipar runa, esperar 2-3s, desequipar. Leer resultado vía Output
-   Log (filtro `CONTAINS`).
-
-**Interpretación esperada:**
-
-| Resultado | Conclusión / siguiente paso |
+| Variable | Tipo |
 |---|---|
-| `Existe: false` siempre, incluso justo después de que `ADD REAL` reportó éxito | El `Add (Map)` de Bloque B y el `FIND` de Bloque A probablemente **no apuntan a la misma variable de instancia** `ActiveRuneStates`. Verificar (click en cada nodo Get de la variable en ambos bloques y confirmar en el panel My Blueprint que ambos resaltan la misma declaración — no una variable local sombreando el nombre, no una variable duplicada). |
-| `Existe: true`, pero el array interno (`Handles`) tiene Length 0 | El problema está en la construcción de `Make STR_RuneStateHandles` en Bloque B — revisar si el pin `Handles` de ese `Make` realmente recibe el array ya modificado por el `Append`, o si por error se está pasando un array distinto/vacío al `Make`. |
+| `LocalHandlesToSave` | Array de DataTableRowHandle |
 
-**Recordatorio para la próxima sesión:** no proponer fixes nuevos sin
-ejecutar este paso primero. El patrón de esta sesión (hipótesis razonable →
-sin confirmar con datos → fix aplicado → sin efecto) ya se repitió una vez
-con el Effect Handle; evitar repetirlo.
+Nuevo flujo en Bloque B:
+
+```
+Break STR_RuneStateHandles → Handles
+  → SET LocalHandlesToSave ← Handles
+  → APPEND (Target Array: GET LocalHandlesToSave, Source: Applied Effect Handles)
+  → Make STR_RuneStateHandles (Handles: GET LocalHandlesToSave)
+  → ADD (Map: ActiveRuneStates, Key: Slot, Value: resultado del Make)
+```
+
+Al usar una variable real (no el output directo de la función pura) tanto
+para `APPEND` como para `Make STR_RuneStateHandles`, la modificación de
+`Append` persiste y `Make` lee el array ya actualizado.
+
+### Diagnóstico completo — historial de la sesión (para referencia futura, patrón reutilizable)
+
+Se instrumentó la cadena completa con Print String, confirmados vía
+**Output Log** (no HUD — el HUD reordena mensajes del mismo frame y no es
+confiable para diagnósticos de orden de ejecución). Orden de descarte de
+hipótesis, en la secuencia real en que se confirmaron:
+
+1. **`ApplyState` funciona correctamente** — `AppliedEffectHandles` con
+   longitud 1 confirmada directo en su output. Descartado como causa.
+2. **Ciclo `ADD REAL: 1` seguido de `FIND REMOVE: 0`** confirmado
+   consistente mientras la runa está equipada — apunta a un problema
+   dentro del propio ciclo de guardado/lectura del Map.
+3. **`Remove Status Effect By Handle` nunca se ejecutaba** — consecuencia
+   directa del punto 2 (For Each Loop sobre array vacío).
+4. **Hipótesis "el Map se autoborra en cada ciclo automático" descartada**
+   — `REMOVE (Map)` (rama False de `Item Is Valid`) solo se ejecutaba al
+   desequipar de verdad, no en cada re-disparo automático.
+5. **Prueba de aislamiento con trigger directo (`BP_RemoveEffectTrigger`)**
+   — se confirmó que `Remove Status Effect By Handle` y la función interna
+   `Remove Status Effect from owner by handle` (en `BP_AbilitySystemComponent`)
+   **funcionan correctamente** cuando se les da el Effect Handle directo,
+   sin pasar por `ActiveRuneStates`. Esto acotó el bug al 100% al Map, no al
+   sistema de remoción del Ability System.
+   > Nota confirmada en esta prueba: el nivel de abstracción State vs Effect
+   > no es relevante — `DT_States.Effects` ya contiene Effect Handles, así
+   > que un trigger de remoción directa con `DT_StatusEffects → Effect_Poison`
+   > es compatible sin importar si el efecto se aplicó originalmente vía
+   > State (`ApplyState`) o vía Effect directo (`BP_PoisonTrigger`).
+6. **`Contains` (Map) confirmó que la Key `7` sí persiste en
+   `ActiveRuneStates`** (`Existe: true` de forma consistente) — esto
+   descartó la Hipótesis A (variables Map desincronizadas entre Bloque A y
+   B) y dejó a la Hipótesis B (struct guardado con array interno vacío)
+   como única candidata.
+7. **Print combinado `Existe + Handles Length`** confirmó
+   `Existe: true - Handles Length: 0` — Hipótesis B confirmada con certeza.
+8. **Inspección visual de las conexiones exactas** en Bloque B reveló que
+   tanto `APPEND` como `Make STR_RuneStateHandles` leían del mismo pin de
+   una función pura (`Break STR_RuneStateHandles`) — causa raíz identificada
+   y corregida con la Local Variable `LocalHandlesToSave`.
+
+### Print String de diagnóstico — estado tras el cierre del bug
+
+El usuario decidió **mantener los Print String activos temporalmente** para
+que el cliente pueda ver el trabajo de debugging realizado. Pendiente de
+limpieza en sesión futura. Lista completa abajo, en la sección de Deuda técnica.
+
+### Lección de arquitectura para el resto del proyecto
+
+Este patrón — conectar múltiples nodos (especialmente uno que modifica por
+referencia, como `Append`, y otro que lee después) directamente al mismo pin
+de salida de una **función pura** que devuelve un array — es una fuente de
+bugs silenciosos: no genera errores de compilación ni de consola, y el
+síntoma (datos "perdidos" entre dos puntos que deberían ver lo mismo) puede
+confundirse fácilmente con problemas de sincronización de variables. Vale la
+pena revisar si este mismo patrón existe en otras partes del proyecto que
+usen `Break` sobre structs con arrays internos seguidos de `Append`/`Add`/
+modificación por referencia (por ejemplo, revisar `UI_CraftingQueue` y otros
+sistemas de queue que manipulan arrays de widgets).
 
 ---
 
@@ -298,13 +308,14 @@ Terror, Confundir, Cegar
 ### Fase 1 — DT_States + BP_StateApplier base ✅
 ### Fase 2 — IsHitEffect como filtro de diseño ✅
 ### Fase 3 — Inspección STR_ItemData + mecanismo de remoción ✅
-### Fase 4 — Estados en Rune Words ⏳
+### Fase 4 — Estados en Rune Words ✅ (con Bug 2 pendiente, prioridad menor)
 - Implementación completa ✅
 - Bug 1 (ItemStates vacío) — ✅ RESUELTO
-- Bug 2 (segundo slot no aplica atributos) — ⏳ pendiente, prioridad menor
-- Bug 3 (remoción al desequipar no funciona) — 🔴 ACTIVO. Causa raíz acotada
-  a la desincronización Map entre Bloque A y Bloque B. Plan de diagnóstico
-  con `Contains Key` listo para próxima sesión.
+- Bug 2 (segundo slot no aplica atributos) — ⏳ pendiente, próxima sesión
+- Bug 3 (remoción al desequipar no funciona) — ✅ RESUELTO. Causa raíz:
+  pin `Handles` de `APPEND` y `Make STR_RuneStateHandles` leyendo
+  directamente de una función pura (`Break STR_RuneStateHandles`) en vez de
+  una variable persistente. Fix: Local Variable `LocalHandlesToSave`.
 
 ---
 
@@ -314,7 +325,8 @@ Terror, Confundir, Cegar
 |---|---|
 | BaseState en BP_Character_Base | Evaluar migración para todos los personajes | ⏳ |
 | Estados en consumibles | Pospuesto — uso ambiguo | ⏳ |
-| Causa raíz del re-disparo de EquipmentChanged en cada tick de daño | ⏳ Mitigado con guard, causa raíz sin inspeccionar. Confirmado nuevamente esta sesión que persiste. |
+| Causa raíz del re-disparo de EquipmentChanged en cada tick de daño | ⏳ Mitigado con guard, causa raíz sin inspeccionar. Sigue ocurriendo (2 veces por frame + re-disparo cada ~1s), pero ya no es bloqueante ahora que el Bug 3 está resuelto. |
+| Revisar patrón "pure function → múltiples consumidores" en otros sistemas | Ver Lección de arquitectura arriba — candidato: `UI_CraftingQueue` y otros sistemas de queue/array | ⏳ Nuevo, sugerido esta sesión |
 
 ---
 
@@ -325,11 +337,13 @@ Terror, Confundir, Cegar
 | Error de stack duplicado en Load Status Effect | Mitigado con guard CheckStatusEffectByHandle en ApplyState | ✅ Mitigado |
 | BaseState solo en BP_Character_Undead2 | Evaluar migración a BP_Character_Base | ⏳ |
 | Pin ItemStates desconectado en Make Item (BP_ItemsLibrary) | Causaba Bug 1 completo | ✅ Resuelto |
-| Bug 3 — remoción de Estado al desequipar no funciona | Causa raíz acotada a desincronización de Map entre Bloque A/B. Ver sección Bug 3 arriba. Plan con `Contains Key` listo. | 🔴 Alta prioridad — activo |
-| Bug 2 — Segundo slot de runa no aplica atributos | Sin retocar en esta sesión | ⏳ Prioridad menor |
+| Bug 3 — remoción de Estado al desequipar no funciona | Causa raíz: pure function reevaluada en vez de variable persistente. Fix: Local Variable `LocalHandlesToSave`. Ver sección Bug 3 completa arriba. | ✅ Resuelto |
+| Bug 2 — Segundo slot de runa no aplica atributos | Sin retocar. Prioridad para próxima sesión. | ⏳ Prioridad menor |
 | Print String "No es runa" debug temporal en UI_ItemSlot.OnDrop | Pendiente eliminar cuando se resuelva Bug 2 | ⏳ |
 | Causa raíz de re-disparo de EquipmentChanged por tick de daño | No inspeccionada — solo mitigada con guard. Confirmado que sigue ocurriendo, 2 veces por frame (Slot 0 + Slot 7) más el re-disparo cada ~1s | ⏳ Media prioridad |
-| Múltiples Print String de diagnóstico temporal agregados esta sesión (PUNTO 1, 1b, 1c, ADD REAL, FIND REMOVE, MAP REMOVE EJECUTADO, REMOVE - Success, EQCHANGED START) | Pendientes de limpiar una vez resuelto Bug 3 — ver lista completa en contexto de sesión | ⏳ Limpieza pendiente post-fix |
+| Print String de diagnóstico del Bug 3 (PUNTO 1, 1b, 1c, ADD REAL, FIND REMOVE, MAP REMOVE EJECUTADO, REMOVE - Success, EQCHANGED START, CONTAINS KEY) | Mantenidos intencionalmente por decisión del usuario, para mostrar el trabajo de debugging al cliente. Pendientes de limpieza en sesión futura. | ⏳ Limpieza pospuesta — decisión del usuario |
+| `BP_RemoveEffectTrigger` (trigger de prueba creado esta sesión) | Usado para aislar y confirmar que el sistema de remoción del Ability System funciona correctamente. Puede quedar en el nivel como herramienta de testing o eliminarse — decisión del usuario. | ⏳ Sin decisión — bajo impacto |
+| Revisar patrón pure-function en otros sistemas de arrays/queues | Ver Lección de arquitectura arriba | ⏳ Nuevo — sugerido, sin prioridad asignada |
 
 ---
 
@@ -349,13 +363,20 @@ Terror, Confundir, Cegar
 >
 > Esto no es una decisión tomada. Es arquitectura observable que debe considerarse
 > al diseñar la persistencia de runas en Logica 5.
+>
+> **Actualización de esta sesión:** el Bug 3 resuelto refuerza esta nota — el
+> patrón de "Local Variable intermedia antes de Append/Make Struct" que
+> resolvió el Bug 3 es directamente aplicable si Logica 5 termina usando un
+> patrón similar de struct + array para persistir configuraciones de runas
+> por ítem. Tenerlo en cuenta al diseñar esa persistencia para evitar el
+> mismo tipo de bug desde el inicio.
 
 ---
 
-*Archivo actualizado — sesión Light Paradox (Bug 3 — diagnóstico profundo con Print String + Output Log)*
-*Cambios: Apply State confirmado funcional (descartado como causa), ciclo ADD REAL / FIND REMOVE
-documentado con evidencia de Output Log, hipótesis de autoborrado del Map descartada
-(MAP REMOVE EJECUTADO no corre en loop), Remove Status Effect from owner by handle inspeccionada
-y descartada como causa (nunca se llega a ejecutar), plan de diagnóstico con Contains Key
-preparado para la siguiente sesión*
+*Archivo actualizado — sesión Light Paradox (Bug 3 — RESUELTO, causa raíz confirmada y fix aplicado)*
+*Cambios: Bug 3 marcado como resuelto con causa raíz completa documentada (pure function
+Break STR_RuneStateHandles reevaluada en vez de variable persistente), fix con Local Variable
+LocalHandlesToSave documentado paso a paso, historial completo de diagnóstico consolidado como
+referencia reutilizable, lección de arquitectura agregada para revisar el mismo patrón en otros
+sistemas, Bug 2 promovido a prioridad de la próxima sesión*
 *Project: Light Paradox · Base: EasySurvivalRPGv5 · UE 5.4.4*
