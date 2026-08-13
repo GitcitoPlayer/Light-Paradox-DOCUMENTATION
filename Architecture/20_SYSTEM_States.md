@@ -48,6 +48,26 @@ efectos en cualquier contexto del juego.
 
 ---
 
+## ⚠️ IMPORTANTE — Dos rutas independientes de modificación de stats (aclarado en sesión Bug 4)
+
+Existen **dos sistemas separados** por los que un ítem puede modificar un stat del personaje. No confundirlos al diagnosticar bugs de "el atributo no sube":
+
+### Ruta A — `EquipmentAttributes` (campo directo del ítem en `STR_ItemData` / `DT_Items`)
+- Vive directamente en la fila del ítem en `DT_Items`, campo `EquipmentAttributes` (Array de `GameplayTag` + `Value`).
+- **No depende de `ItemStates` ni de ningún Effect.** Es un array completamente independiente dentro del mismo struct.
+- Se aplica (en teoría) mediante un nodo/función **`Update Equipment Attributes`**, mencionado en el flujo de `EquipmentChanged` de `BP_Character_Player`, pero **su interior nunca ha sido inspeccionado ni documentado en este proyecto**.
+- **Estado: 🔴 Bug 4 activo** — ver sección Bug 4 más abajo. El bonus de esta ruta actualmente solo se aplica si el ítem *también* tiene `ItemStates` asignado, lo cual no debería ser necesario según el diseño de datos (son campos hermanos, no dependientes).
+
+### Ruta B — `CharacterAttributes` (dentro de un `STR_StatusEffectInstance`, vía `ItemStates`)
+- Vive en `DT_StatusEffects`, campo `CharacterAttributes`, dentro de la fila del Effect referenciado por un `ItemState` del ítem.
+- Solo se aplica **mientras el actor del efecto (`BP_StatusEffect_*`) está vivo** — requiere que el ítem tenga `ItemStates` asignado, pase por `Apply State` → `Load Status Effect`, y se instancie el Effect correspondiente (normalmente `BP_StatusEffect_ChangeState`).
+- Esta ruta **sí depende correctamente de `ItemStates`** — es su diseño esperado, no un bug.
+- **Estado: ✅ Funcional**, confirmado en sesiones anteriores (Corn, Beet, Pumpkin, Cabbage, Healing, etc. — ver tabla de filas en `15_SYSTEM_StatusEffects.md`).
+
+**Regla de diagnóstico:** antes de investigar cualquier reporte de "el stat no sube", confirmar primero en qué campo vive el bonus — `EquipmentAttributes` (Ruta A, ítem) o `CharacterAttributes` (Ruta B, Effect). Son independientes y sus bugs no se resuelven de la misma forma.
+
+---
+
 ## STR_StateData — Row Struct
 
 Asset: `STR_StateData`
@@ -81,7 +101,7 @@ Asset: `DT_States` — Row Struct: `STR_StateData`
 **Tipo:** Blueprint Function Library
 **Estado:** ✅ Funcional para aplicación. El output `AppliedEffectHandles`
 confirmado funcional (sesión anterior) y confirmado nuevamente como no
-relacionado al Bug 3 (esta sesión).
+relacionado al Bug 3 (sesión anterior).
 
 > **Nota crítica:** BP_StateApplier NO debe ser un Actor.
 
@@ -128,7 +148,7 @@ Entry (StateRowHandle, Target, Instigator)
 ### Flujo en EquipmentChanged (✅ actualizado con el fix del Bug 3)
 
 ```
-[después de Update Equipment Attributes]
+[después de Update Equipment Attributes]   ← ⚠️ ver Bug 4: este nodo es sospechoso de estar mal conectado
 
 BLOQUE A — Remover Estados de runa anterior:
   FIND (ActiveRuneStates, Key: Slot)
@@ -163,23 +183,57 @@ BLOQUE B — Aplicar Estados de runa nueva:
 
 ---
 
-## Bug 2 — Segundo slot de runa no aplica atributos de equipamiento
+## Bug 2 — Segundo slot de runa no aplica atributos de equipamiento ✅ RESUELTO
 
-**Estado:** ⏳ Pendiente — prioridad para la próxima sesión, ahora que el Bug 3 está cerrado.
-**Síntoma:** Al desbloquear el segundo slot de runa (HeadRuneSlot_1) y colocar
-la misma runa, los `EquipmentAttributes` no se aplican. Aparece el debug log
-"No es runa" (Print String temporal en `UI_ItemSlot.OnDrop`).
-**Requiere:** inspección de `UI_ItemSlot.OnDrop` y la lógica de detección de
-runas por Gameplay Tag (`Does Container Match Tag Query`).
+**Estado final: ✅ CONFIRMADO RESUELTO** en la sesión de fix de `CheckContainerSlotForItem`.
+
+### Síntoma
+Al desbloquear el segundo slot de runa (`HeadRuneSlot_1`, índice 14) y
+colocar una runa, los atributos/efectos no se aplicaban. Aparecía el debug
+log "No es runa" (Print String temporal en `UI_ItemSlot.OnDrop`) de forma
+intermitente/confusa durante el diagnóstico.
+
+### Causa raíz confirmada
+
+En `BP_EquipmentComponent` → override `CheckContainerSlotForItem`, la
+comparación `EquipmentType == Slot` fallaba siempre para los slots
+duplicados de Head Rune Word (índices 14 al 22), porque `Item Is Equipment`
+siempre devuelve `EquipmentType = HeadRuneWord (7)` para cualquier Rune Word
+de tipo Head — todos comparten el mismo Gameplay Tag y la misma entrada en
+el Map `Local Equipment Types` (ver `06_BLUEPRINT_BP_EquipmentComponent.md`).
+
+Esto hacía que `CheckContainerSlotForItem` devolviera `False` para los
+slots 14-22, impidiendo que el ítem quedara correctamente registrado en el
+`EquipmentContainer` en esos slots, lo cual cortaba en cascada la ejecución
+correcta de `EquipmentChanged` y por lo tanto de `ApplyState`/atributos para
+esos slots.
+
+### Fix aplicado
+
+Se agregó una condición `OR` en `CheckContainerSlotForItem` que acepta el
+caso especial `EquipmentType == HeadRuneWord AND Slot dentro de [14, 22]`,
+preservando la validación original para el resto de slots.
+
+**Documentación completa del fix, con fórmula lógica y patrón para
+replicar a otras familias de runa (Body/Pants/Hands/Feet/Backpack/Tool):**
+ver `06_BLUEPRINT_BP_EquipmentComponent.md`, sección "CheckContainerSlotForItem — Override".
+
+### Nota importante — se descubrió un bug derivado (ver Bug 4)
+
+Al confirmar el fix del Bug 2 en juego, se detectó un **problema distinto y
+nuevo**: el atributo de `EquipmentAttributes` (Ruta A, ver sección "Dos
+rutas independientes" arriba) solo se aplica si el ítem *también* tiene
+`ItemStates` asignado — lo cual no debería ser un requisito, porque
+`EquipmentAttributes` e `ItemStates` son campos independientes del ítem.
+Este es el **Bug 4**, documentado abajo, pendiente para la próxima sesión.
 
 ---
 
 ## Bug 3 — El efecto no se remueve al desequipar la runa ✅ RESUELTO
 
-**Estado final: ✅ CONFIRMADO RESUELTO esta sesión**, con fix aplicado y
-verificado por el usuario en juego (el efecto de veneno se detiene
-correctamente al desequipar la runa, tanto en configuración permanente como
-no permanente).
+**Estado final: ✅ CONFIRMADO RESUELTO**, con fix aplicado y verificado por
+el usuario en juego (el efecto de veneno se detiene correctamente al
+desequipar la runa, tanto en configuración permanente como no permanente).
 
 ### Síntomas originales (ya no reproducibles tras el fix)
 
@@ -229,52 +283,6 @@ Al usar una variable real (no el output directo de la función pura) tanto
 para `APPEND` como para `Make STR_RuneStateHandles`, la modificación de
 `Append` persiste y `Make` lee el array ya actualizado.
 
-### Diagnóstico completo — historial de la sesión (para referencia futura, patrón reutilizable)
-
-Se instrumentó la cadena completa con Print String, confirmados vía
-**Output Log** (no HUD — el HUD reordena mensajes del mismo frame y no es
-confiable para diagnósticos de orden de ejecución). Orden de descarte de
-hipótesis, en la secuencia real en que se confirmaron:
-
-1. **`ApplyState` funciona correctamente** — `AppliedEffectHandles` con
-   longitud 1 confirmada directo en su output. Descartado como causa.
-2. **Ciclo `ADD REAL: 1` seguido de `FIND REMOVE: 0`** confirmado
-   consistente mientras la runa está equipada — apunta a un problema
-   dentro del propio ciclo de guardado/lectura del Map.
-3. **`Remove Status Effect By Handle` nunca se ejecutaba** — consecuencia
-   directa del punto 2 (For Each Loop sobre array vacío).
-4. **Hipótesis "el Map se autoborra en cada ciclo automático" descartada**
-   — `REMOVE (Map)` (rama False de `Item Is Valid`) solo se ejecutaba al
-   desequipar de verdad, no en cada re-disparo automático.
-5. **Prueba de aislamiento con trigger directo (`BP_RemoveEffectTrigger`)**
-   — se confirmó que `Remove Status Effect By Handle` y la función interna
-   `Remove Status Effect from owner by handle` (en `BP_AbilitySystemComponent`)
-   **funcionan correctamente** cuando se les da el Effect Handle directo,
-   sin pasar por `ActiveRuneStates`. Esto acotó el bug al 100% al Map, no al
-   sistema de remoción del Ability System.
-   > Nota confirmada en esta prueba: el nivel de abstracción State vs Effect
-   > no es relevante — `DT_States.Effects` ya contiene Effect Handles, así
-   > que un trigger de remoción directa con `DT_StatusEffects → Effect_Poison`
-   > es compatible sin importar si el efecto se aplicó originalmente vía
-   > State (`ApplyState`) o vía Effect directo (`BP_PoisonTrigger`).
-6. **`Contains` (Map) confirmó que la Key `7` sí persiste en
-   `ActiveRuneStates`** (`Existe: true` de forma consistente) — esto
-   descartó la Hipótesis A (variables Map desincronizadas entre Bloque A y
-   B) y dejó a la Hipótesis B (struct guardado con array interno vacío)
-   como única candidata.
-7. **Print combinado `Existe + Handles Length`** confirmó
-   `Existe: true - Handles Length: 0` — Hipótesis B confirmada con certeza.
-8. **Inspección visual de las conexiones exactas** en Bloque B reveló que
-   tanto `APPEND` como `Make STR_RuneStateHandles` leían del mismo pin de
-   una función pura (`Break STR_RuneStateHandles`) — causa raíz identificada
-   y corregida con la Local Variable `LocalHandlesToSave`.
-
-### Print String de diagnóstico — estado tras el cierre del bug
-
-El usuario decidió **mantener los Print String activos temporalmente** para
-que el cliente pueda ver el trabajo de debugging realizado. Pendiente de
-limpieza en sesión futura. Lista completa abajo, en la sección de Deuda técnica.
-
 ### Lección de arquitectura para el resto del proyecto
 
 Este patrón — conectar múltiples nodos (especialmente uno que modifica por
@@ -287,6 +295,99 @@ pena revisar si este mismo patrón existe en otras partes del proyecto que
 usen `Break` sobre structs con arrays internos seguidos de `Append`/`Add`/
 modificación por referencia (por ejemplo, revisar `UI_CraftingQueue` y otros
 sistemas de queue que manipulan arrays de widgets).
+
+---
+
+## 🔴 Bug 4 (NUEVO — abierto esta sesión) — EquipmentAttributes no se aplica sin ItemStates asignado
+
+**Estado:** 🔴 Activo — diagnóstico iniciado, pendiente de confirmación en
+próxima sesión antes de aplicar cualquier fix.
+
+### Síntoma confirmado por el usuario
+
+Con una Rune Word que tiene:
+- `EquipmentAttributes`: 1 elemento (`EasyRPG.Attributes.Base.EnergyRegeneration`, Value `30.0`)
+- `ItemStates`: 1 elemento (`DT_States` → `State_Poison`)
+
+...al equipar la runa, `EnergyRegeneration` **sí** sube +30 correctamente,
+por cada runa colocada.
+
+Si se elimina el elemento de `ItemStates` (dejándolo en 0 elementos) mientras
+`EquipmentAttributes` permanece igual (1 elemento, sin cambios), el bonus de
+`EnergyRegeneration` **deja de aplicarse**.
+
+### Por qué esto no debería pasar según el diseño de datos
+
+`EquipmentAttributes` e `ItemStates` son dos campos **hermanos e
+independientes** dentro de `STR_ItemData` — confirmado visualmente en el
+Row Editor de `DT_Items` (ambos aparecen como campos separados al mismo
+nivel, sin relación jerárquica entre sí). Además, se confirmó por captura
+que `CharacterAttributes` dentro del `Effect_Poison` referenciado por
+`State_Poison` está **vacío** (0 Array elements, 0 Map elements) — es decir,
+el bonus de `EnergyRegeneration` no puede estar viniendo de la Ruta B
+(`CharacterAttributes` vía Effect). Tiene que estar viniendo de la Ruta A
+(`EquipmentAttributes` directo del ítem), que no debería tener ninguna
+dependencia de `ItemStates`.
+
+### Hipótesis principal (no confirmada — requiere inspección de grafo)
+
+El nodo/función responsable de leer `EquipmentAttributes` y aplicarlo
+(mencionado en el flujo de `EquipmentChanged` como `Update Equipment
+Attributes`, **nunca inspeccionado en detalle en este proyecto**) podría
+estar conectado, por error de wiring, al pin **`Loop Body`** del
+`For Each Loop` que itera sobre `Item States` en el Bloque B (ver flujo de
+`EquipmentChanged` arriba), en vez de tener su propia rama de ejecución
+independiente y anterior a ese loop.
+
+Esto explicaría el síntoma exactamente:
+- Con `ItemStates` con ≥1 elemento → el `For Each Loop` dispara `Loop Body`
+  al menos una vez → si `Update Equipment Attributes` cuelga de ahí, se
+  ejecuta.
+- Con `ItemStates` vacío (0 elementos) → el `For Each Loop` **nunca**
+  dispara `Loop Body`, solo `Completed` → si `Update Equipment Attributes`
+  está enganchado a `Loop Body`, nunca se ejecuta.
+
+Es el mismo tipo de patrón de bug silencioso de wiring que produjo el Bug 3
+(ver Lección de Arquitectura arriba), pero en el exec chain en vez de en un
+pure function.
+
+> **Nivel de confianza:** hipótesis fuerte basada en el patrón del síntoma,
+> **no confirmada por inspección directa del grafo**. No aplicar ningún fix
+> sin completar primero el diagnóstico de la checklist de abajo.
+
+### Checklist de diagnóstico para la próxima sesión
+
+1. Abrir `BP_Character_Player` → función `EquipmentChanged`.
+2. Localizar el nodo `Update Equipment Attributes` (nombre puede variar
+   ligeramente — buscar el nodo que efectivamente lee `EquipmentAttributes`
+   del ítem).
+3. Click en el pin de entrada de ejecución (flecha blanca izquierda) de ese
+   nodo. Seguir el cable **hacia atrás** visualmente. Confirmar una de dos:
+   - **(A)** Viene de un pin `Loop Body` de un `For Each Loop` sobre
+     `Item States` → confirma la hipótesis.
+   - **(B)** Viene de un `Sequence`, `Branch`, o está en la cadena principal
+     fuera de cualquier loop → descarta la hipótesis, requiere inspección
+     más profunda del interior de la función.
+4. Si hay duda visual: agregar `Print String` (Development Only, target:
+   **Output Log**, no pantalla) justo antes del nodo `Update Equipment
+   Attributes`, texto: `"Update Equipment Attributes EJECUTADO"`.
+5. Probar en PIE dos veces:
+   - Equipar runa **con** `ItemStates` asignado → revisar si el log aparece.
+   - Equipar runa **sin** `ItemStates` (0 elementos) → revisar si el log
+     **no** aparece.
+6. Según resultado:
+
+| Resultado del log | Diagnóstico | Siguiente paso |
+|---|---|---|
+| No aparece cuando `ItemStates` está vacío | Hipótesis confirmada — wiring colgado del `Loop Body` | Mover el nodo fuera del loop, a su propia rama de ejecución previa (ej. vía `Sequence`), independiente de si `Item States` tiene elementos o no |
+| Sí aparece siempre, incluso sin `ItemStates` | Hipótesis descartada — el problema está *dentro* de `Update Equipment Attributes` (posible `Branch` interno mal condicionado leyendo `ItemStates.Length`) | Requiere ver el interior completo de la función — no intentar fix sin esa inspección |
+
+7. Una vez identificada la causa exacta, actualizar esta sección con el fix
+   aplicado (siguiendo el mismo formato usado para Bug 2 y Bug 3), y
+   documentar por primera vez el interior de `Update Equipment Attributes`
+   en un archivo nuevo o en `07_BLUEPRINT_BP_Character_Player.md`, ya que
+   actualmente no existe documentación de esa función en ningún .md del
+   proyecto.
 
 ---
 
@@ -308,14 +409,20 @@ Terror, Confundir, Cegar
 ### Fase 1 — DT_States + BP_StateApplier base ✅
 ### Fase 2 — IsHitEffect como filtro de diseño ✅
 ### Fase 3 — Inspección STR_ItemData + mecanismo de remoción ✅
-### Fase 4 — Estados en Rune Words ✅ (con Bug 2 pendiente, prioridad menor)
+### Fase 4 — Estados en Rune Words ✅ (con Bug 2 resuelto, Bug 4 nuevo pendiente)
 - Implementación completa ✅
 - Bug 1 (ItemStates vacío) — ✅ RESUELTO
-- Bug 2 (segundo slot no aplica atributos) — ⏳ pendiente, próxima sesión
+- Bug 2 (segundo slot no aplica atributos) — ✅ RESUELTO. Causa raíz:
+  `CheckContainerSlotForItem` fallaba la comparación `EquipmentType == Slot`
+  para slots duplicados de Head Rune Word. Fix: condición `OR` adicional.
+  Ver `06_BLUEPRINT_BP_EquipmentComponent.md`.
 - Bug 3 (remoción al desequipar no funciona) — ✅ RESUELTO. Causa raíz:
   pin `Handles` de `APPEND` y `Make STR_RuneStateHandles` leyendo
   directamente de una función pura (`Break STR_RuneStateHandles`) en vez de
   una variable persistente. Fix: Local Variable `LocalHandlesToSave`.
+- Bug 4 (EquipmentAttributes depende erróneamente de ItemStates) —
+  🔴 **NUEVO, activo.** Ver sección Bug 4 completa arriba. Prioridad para
+  la próxima sesión.
 
 ---
 
@@ -326,7 +433,8 @@ Terror, Confundir, Cegar
 | BaseState en BP_Character_Base | Evaluar migración para todos los personajes | ⏳ |
 | Estados en consumibles | Pospuesto — uso ambiguo | ⏳ |
 | Causa raíz del re-disparo de EquipmentChanged en cada tick de daño | ⏳ Mitigado con guard, causa raíz sin inspeccionar. Sigue ocurriendo (2 veces por frame + re-disparo cada ~1s), pero ya no es bloqueante ahora que el Bug 3 está resuelto. |
-| Revisar patrón "pure function → múltiples consumidores" en otros sistemas | Ver Lección de arquitectura arriba — candidato: `UI_CraftingQueue` y otros sistemas de queue/array | ⏳ Nuevo, sugerido esta sesión |
+| Revisar patrón "pure function → múltiples consumidores" en otros sistemas | Ver Lección de arquitectura arriba — candidato: `UI_CraftingQueue` y otros sistemas de queue/array | ⏳ |
+| **Nuevo:** Documentar el interior de `Update Equipment Attributes` | Nunca inspeccionado en detalle — necesario para cerrar Bug 4 | 🔴 Prioridad próxima sesión |
 
 ---
 
@@ -337,13 +445,15 @@ Terror, Confundir, Cegar
 | Error de stack duplicado en Load Status Effect | Mitigado con guard CheckStatusEffectByHandle en ApplyState | ✅ Mitigado |
 | BaseState solo en BP_Character_Undead2 | Evaluar migración a BP_Character_Base | ⏳ |
 | Pin ItemStates desconectado en Make Item (BP_ItemsLibrary) | Causaba Bug 1 completo | ✅ Resuelto |
-| Bug 3 — remoción de Estado al desequipar no funciona | Causa raíz: pure function reevaluada en vez de variable persistente. Fix: Local Variable `LocalHandlesToSave`. Ver sección Bug 3 completa arriba. | ✅ Resuelto |
-| Bug 2 — Segundo slot de runa no aplica atributos | Sin retocar. Prioridad para próxima sesión. | ⏳ Prioridad menor |
-| Print String "No es runa" debug temporal en UI_ItemSlot.OnDrop | Pendiente eliminar cuando se resuelva Bug 2 | ⏳ |
+| Bug 2 — CheckContainerSlotForItem fallaba para slots de runa duplicados | Causa raíz: comparación EquipmentType==Slot rota para índices 14-22. Fix: OR adicional. Ver `06_BLUEPRINT_BP_EquipmentComponent.md` | ✅ Resuelto |
+| Bug 3 — remoción de Estado al desequipar no funciona | Causa raíz: pure function reevaluada en vez de variable persistente. Fix: Local Variable `LocalHandlesToSave`. | ✅ Resuelto |
+| **Bug 4 — EquipmentAttributes no se aplica sin ItemStates** | Sospecha de wiring de `Update Equipment Attributes` colgado del `Loop Body` del For Each Loop de Item States. Ver checklist de diagnóstico completa arriba. | 🔴 **Activo — prioridad próxima sesión** |
+| Print String "No es runa" debug temporal en UI_ItemSlot.OnDrop | Pendiente eliminar — su comportamiento confuso durante el diagnóstico del Bug 2 quedó explicado por la causa raíz real (CheckContainerSlotForItem), no por la lógica de detección de runa en sí | ⏳ |
 | Causa raíz de re-disparo de EquipmentChanged por tick de daño | No inspeccionada — solo mitigada con guard. Confirmado que sigue ocurriendo, 2 veces por frame (Slot 0 + Slot 7) más el re-disparo cada ~1s | ⏳ Media prioridad |
 | Print String de diagnóstico del Bug 3 (PUNTO 1, 1b, 1c, ADD REAL, FIND REMOVE, MAP REMOVE EJECUTADO, REMOVE - Success, EQCHANGED START, CONTAINS KEY) | Mantenidos intencionalmente por decisión del usuario, para mostrar el trabajo de debugging al cliente. Pendientes de limpieza en sesión futura. | ⏳ Limpieza pospuesta — decisión del usuario |
-| `BP_RemoveEffectTrigger` (trigger de prueba creado esta sesión) | Usado para aislar y confirmar que el sistema de remoción del Ability System funciona correctamente. Puede quedar en el nivel como herramienta de testing o eliminarse — decisión del usuario. | ⏳ Sin decisión — bajo impacto |
-| Revisar patrón pure-function en otros sistemas de arrays/queues | Ver Lección de arquitectura arriba | ⏳ Nuevo — sugerido, sin prioridad asignada |
+| `BP_RemoveEffectTrigger` (trigger de prueba) | Puede quedar en el nivel como herramienta de testing o eliminarse — decisión del usuario. | ⏳ Sin decisión — bajo impacto |
+| Revisar patrón pure-function en otros sistemas de arrays/queues | Ver Lección de arquitectura arriba | ⏳ Sin prioridad asignada |
+| Interior de `Update Equipment Attributes` sin documentar | Necesario para cerrar Bug 4 correctamente | 🔴 Prioridad próxima sesión |
 
 ---
 
@@ -364,19 +474,24 @@ Terror, Confundir, Cegar
 > Esto no es una decisión tomada. Es arquitectura observable que debe considerarse
 > al diseñar la persistencia de runas en Logica 5.
 >
-> **Actualización de esta sesión:** el Bug 3 resuelto refuerza esta nota — el
+> **Actualización sesión Bug 3:** el Bug 3 resuelto refuerza esta nota — el
 > patrón de "Local Variable intermedia antes de Append/Make Struct" que
 > resolvió el Bug 3 es directamente aplicable si Logica 5 termina usando un
 > patrón similar de struct + array para persistir configuraciones de runas
-> por ítem. Tenerlo en cuenta al diseñar esa persistencia para evitar el
-> mismo tipo de bug desde el inicio.
+> por ítem.
+>
+> **Actualización sesión Bug 4:** si `EquipmentAttributes` termina
+> necesitando persistencia por-ítem también (no solo `ItemStates`), la
+> solución de Bug 4 debe diseñarse teniendo en cuenta que ambos campos
+> (`EquipmentAttributes` e `ItemStates`) eventualmente conviven en el mismo
+> `STR_ItemData` y podrían compartir el mismo mecanismo de persistencia
+> futuro. No tomar decisiones de Fase 2 de Logica 5 sin considerar esto.
 
 ---
 
-*Archivo actualizado — sesión Light Paradox (Bug 3 — RESUELTO, causa raíz confirmada y fix aplicado)*
-*Cambios: Bug 3 marcado como resuelto con causa raíz completa documentada (pure function
-Break STR_RuneStateHandles reevaluada en vez de variable persistente), fix con Local Variable
-LocalHandlesToSave documentado paso a paso, historial completo de diagnóstico consolidado como
-referencia reutilizable, lección de arquitectura agregada para revisar el mismo patrón en otros
-sistemas, Bug 2 promovido a prioridad de la próxima sesión*
+*Archivo actualizado — sesión Light Paradox (Bug 2 RESUELTO, Bug 4 nuevo abierto)*
+*Cambios: Bug 2 marcado como resuelto con causa raíz y referencia cruzada a 06_BLUEPRINT_BP_EquipmentComponent.md,
+sección nueva "Dos rutas independientes de modificación de stats" (EquipmentAttributes vs CharacterAttributes)
+agregada para prevenir futuras confusiones diagnósticas, Bug 4 documentado completo con hipótesis, nivel de
+confianza explícito, y checklist de diagnóstico paso a paso lista para la próxima sesión*
 *Project: Light Paradox · Base: EasySurvivalRPGv5 · UE 5.4.4*
