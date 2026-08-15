@@ -27,9 +27,9 @@ Servirá como base para disparar eventos de ciclos lunares y tipos de eclipse.
 | Asset | Tipo | Notas |
 |---|---|---|
 | `M_Procedural_Sky_MASTER02` | Material | Pendiente verificar uso real en escena |
-| `M_SkySphere` | Material | ⚠️ Estaba incompleto tras migración — ver Bug 2. Reparado parcialmente esta sesión (nodo `MF_SunEclipse` recreado). |
+| `M_SkySphere` | Material | ⚠️ Estaba incompleto tras migración — ver Bug 2. Reparado parcialmente (nodo `MF_SunEclipse` recreado). Conteo de instrucciones actual: **455** vs **483** del original — diferencia de 28, pendiente investigar si es relevante. |
 | `MI_SkySpherePhases` | Material Instance | Parámetros `Eclipse Phase`, `SunScale`, `MoonPhase`, `MoonScale` ahora visibles tras reparar `M_SkySphere`. Valores reaplicados. |
-| `SM_SkySphere` | Static Mesh | Transform (Rotation/Location) confirmado idéntico al original — copiado directamente. Descartado como causa del Bug 2. |
+| `SM_SkySphere` | Static Mesh | Transform (Rotation/Location) confirmado idéntico al original. Collision Preset cambiado a `NoCollision` — cambio intencional del usuario (evita bug de personaje atorado sobre el mesh). Confirmado sin relación al Bug 3. Attachado como hijo de `Moon`, no de `DirectionalLight` — ver hallazgo de jerarquía. |
 | `dark_moon` | Texture | |
 | `gradient_sphere` / `GradientSphere` | Texture | ⚠️ Posible duplicado — verificar cuál está realmente asignado en materiales |
 | `Sun` | Texture | |
@@ -39,7 +39,35 @@ Servirá como base para disparar eventos de ciclos lunares y tipos de eclipse.
 
 | Asset | Tipo | Notas |
 |---|---|---|
-| `MF_SunEclipse` | Material Function | ⚠️ No existía en el proyecto migrado — causaba el Bug 2. **Recreada manualmente esta sesión** (el Migrate nativo de Unreal falló por incompatibilidad de versión 5.5.4 → 5.4.4). Reconectada en `M_SkySphere` en el pin `Sun Eclipse Phase In (S)`. |
+| `MF_SunEclipse` | Material Function | ⚠️ No existía en el proyecto migrado — causaba el Bug 2. **Recreada manualmente** (el Migrate nativo de Unreal falló por incompatibilidad de versión 5.5.4 → 5.4.4). Reconectada en `M_SkySphere` en el pin `Sun Eclipse Phase In (S)`. |
+
+---
+
+## Jerarquía de componentes confirmada en BP_DayNight
+
+Confirmada esta sesión vía inspección directa del panel Components/Details.
+Más completa que lo documentado en sesiones previas:
+
+```
+BP_DayNight (Self)
+  DefaultSceneRoot
+    ├── Billboard
+    ├── VolumetricCloud
+    ├── ExponentialHeightFog
+    ├── SkyAtmosphere
+    └── DirectionalLight            ← "Sol"
+          ├── SkyLight
+          └── Moon                  ← ⚠️ ícono idéntico a Directional Light — probable segundo componente de luz direccional para la luna, NO confirmado como Scene Component vacío
+                └── SM_SkySphere    ← el mesh de la esfera de cielo está attachado aquí, no al Sol
+```
+
+**Implicación no resuelta:** la lógica documentada en el EventGraph
+(`Sun Yaw → Make Rotator → Set World Rotation (Target: Directional Light)`)
+rota únicamente al componente `DirectionalLight` (Sol). El mesh visual
+`SM_SkySphere` depende del transform de `Moon`, un componente distinto.
+La relación exacta entre ambos —si hay lógica adicional que sincronice su
+rotación, o que alterne cuál está activo según la hora— no está documentada
+todavía. Ver Bug 3, Hipótesis 3.
 
 ---
 
@@ -62,15 +90,16 @@ Servirá como base para disparar eventos de ciclos lunares y tipos de eclipse.
 | Track | Tipo confirmado | Comportamiento |
 |---|---|---|
 | `Time` | **Float Track** | Curva lineal de `0.00` a `24.00` a lo largo de todo el Length. Un keyframe en (0,0) y otro en (24,24). |
-| `DayEnded` | **Float Track** (corregido — NO es Event Track, ver Corrección abajo) | Curva plana en `0.00`, con un keyframe visible en `(24.00, 0.00)`. ⚠️ Pendiente confirmar si hay keyframes ocultos no visibles en la captura (ej. un salto a `1.0` cerca de t=24). |
-| `Sun Yaw` | **Float Track** | ⚠️ Contenido de la curva no capturado aún — pendiente para próxima sesión |
+| `DayEnded` | **Float Track** | Curva plana en `0.00`, con un keyframe visible en `(24.00, 0.00)`. ⚠️ Pendiente confirmar si hay keyframes ocultos no visibles en la captura (ej. un salto a `1.0` cerca de t=24). |
+| `Sun Yaw` | **Float Track** | ⚠️ **Aún sin capturar — pendiente para mañana.** Crítico para el Bug 3: si la curva posiciona el sol bajo el horizonte al iniciar el Timeline, podría contribuir al apagón. |
 
-### Corrección de documentación (sesión anterior)
-En una sesión previa se documentó `Day Ended` como **Event Track**. Corregido:
-es un **Float Track**. Evidencia: el panel de `DayEnded` en el Curve Editor
-muestra dropdown `External Curve`, checkbox `Synchronize View`, opción
-`Reorder`, y eje Y numérico de 0 a 24 — idéntico formato a `Time` y `Sun Yaw`.
-Los Event Tracks reales no tienen eje Y numérico ni curva editable.
+### Corrección de documentación (sesión previa)
+`Day Ended` fue documentado erróneamente como Event Track en una sesión
+anterior. Corregido: es un **Float Track**. Evidencia: el panel de
+`DayEnded` en el Curve Editor muestra dropdown `External Curve`, checkbox
+`Synchronize View`, opción `Reorder`, y eje Y numérico de 0 a 24 — idéntico
+formato a `Time` y `Sun Yaw`. Los Event Tracks reales no tienen eje Y
+numérico ni curva editable.
 
 ---
 
@@ -111,6 +140,11 @@ diseñe el sistema de ciclos lunares/eclipses, ya que probablemente `Day`
 deba incrementarse vía el pin `Day Ended` (actualmente sin usar) en vez de
 `Update`.
 
+**Pendiente de esta sesión:** buscar con `Ctrl+F` en el EventGraph nodos
+relacionados a `Moon`, `Set Visibility`, `Set Intensity`, `Set Actor Hidden`
+— posible lógica de encendido/apagado Sol/Luna aún no documentada, relevante
+para el Bug 3.
+
 ---
 
 ## Bug 1 — Timeline con ERROR tras migración 5.5.4 → 5.4.4
@@ -131,22 +165,17 @@ dejando el nodo sin tracks definidas.
 3. Recrear tracks: `Time` (Float Track), `DayEnded` (Float Track), `Sun Yaw` (Float Track).
 4. Reconectar nodo en EventGraph según flujo confirmado.
 
-**Pendiente:** confirmar keyframes exactos del track `Sun Yaw` (no capturado
-completo) y confirmar si `DayEnded` tiene keyframes ocultos además del
-visible en `(24.00, 0.00)`.
-
 ---
 
 ## Bug 2 — Material M_SkySphere incompleto tras migración
 
-**Estado:** 🟡 Parcialmente resuelto esta sesión — nodo faltante recreado y
-reconectado, pero el síntoma original (sin cielo, sin luz) **persiste**.
-Ver Bug 3 para el problema actualmente activo.
+**Estado:** 🟡 Parcialmente resuelto — nodo faltante recreado y reconectado.
+Persiste diferencia menor de instrucciones (455 vs 483) y persiste el
+síntoma general de iluminación (ver Bug 3).
 
 ### Diagnóstico descartado
 Rotación/Transform de `SM_SkySphere` y del Directional Light — confirmado
-idéntico entre proyectos (copiado directamente por el usuario, valores
-verificados iguales).
+idéntico entre proyectos.
 
 ### Causa raíz confirmada
 Comparando resultados de búsqueda "Eclipse" en el grafo de `M_SkySphere`
@@ -161,25 +190,13 @@ entre el proyecto original y el migrado, nodo por nodo:
 | `SunEclipse` — Named Reroute Usage | ✅ | ✅ |
 | `Eclipse` — Comment | ✅ | ✅ |
 
-El parámetro `Eclipse Phase` y el Named Reroute existían ("la tubería"
-estaba), pero no había nada del otro lado consumiendo el dato — faltaba la
-llamada a la Material Function `MF_SunEclipse`, que hace el cálculo real
-del efecto de eclipse sobre el sol. Esto explicaba en cascada:
-- `Eclipse Phase`, `SunScale`, `MoonPhase`, `MoonScale` no aparecían como
-  parámetros activos en `MI_SkySpherePhases`.
-- Diferencia de instrucciones de shader (331 vs 483 del original) — faltaba
-  toda la lógica interna de `MF_SunEclipse`.
-
-### Fix aplicado esta sesión
-El **Migrate nativo de Unreal falló por incompatibilidad de versión**
-(5.5.4 → 5.4.4) al intentar traer `MF_SunEclipse` junto con sus
-dependencias. Se optó por **recrear la Material Function manualmente**:
-1. Se recreó `MF_SunEclipse` como asset nuevo en el proyecto migrado.
-2. Se conectó como nodo `Material Function Call` dentro de `M_SkySphere`,
-   en el pin `Sun Eclipse Phase In (S)`.
-3. Resultado confirmado: los parámetros `Eclipse Phase`, `SunScale`,
-   `MoonPhase`, `MoonScale` ahora aparecen correctamente en
-   `MI_SkySpherePhases`, y los valores de override fueron reaplicados:
+### Fix aplicado
+El Migrate nativo de Unreal falló por incompatibilidad de versión (5.5.4 →
+5.4.4) al intentar traer `MF_SunEclipse` con sus dependencias. Se recreó la
+Material Function manualmente y se reconectó en `M_SkySphere`, pin
+`Sun Eclipse Phase In (S)`. Resultado: los parámetros `Eclipse Phase`,
+`SunScale`, `MoonPhase`, `MoonScale` ahora aparecen en `MI_SkySpherePhases`,
+con valores reaplicados:
 
 | Parámetro | Valor reaplicado |
 |---|---|
@@ -188,32 +205,118 @@ dependencias. Se optó por **recrear la Material Function manualmente**:
 | SunScale | `0.052` |
 | MoonPhase | `0.744966` |
 
-**Pendiente de confirmar:** si hubo alguna otra Material Function además de
-`MF_SunEclipse` que también faltara (por ejemplo una equivalente para la
-luna — no confirmada aún, ver Bug 3). También pendiente confirmar si el
-conteo de instrucciones de shader del `M_SkySphere` reparado ya se acerca a
-las 483 originales, o si sigue por debajo (indicaría más nodos faltantes).
+**Pendiente:** el conteo de instrucciones de shader tras el fix es **455**,
+todavía por debajo de las **483** del original (diferencia de 28
+instrucciones). Podría haber otro nodo/función menor faltante. Investigar
+si esta diferencia es relevante para el Bug 3 o es un tema aparte, de menor
+prioridad.
 
 ---
 
-## Bug 3 — Sin cielo ni luz visible pese a Material reparado (ACTIVO)
+## Bug 3 — Sin cielo ni luz visible en runtime (PIE) — ACTIVO
 
-**Estado:** 🔴 Activo — en investigación, sesión actual.
+**Estado:** 🔴 Activo — hallazgo de jerarquía nuevo esta sesión, causa raíz
+aún no confirmada.
 
-**Síntoma:** Tras reparar `M_SkySphere` (Bug 2) y confirmar que los
-parámetros de `MI_SkySpherePhases` ya están completos y con sus valores
-reaplicados, el cielo y la luz **siguen sin verse** en la escena de prueba.
+### Síntoma
+El preview estático del editor (antes de dar Play) se ve correcto — cielo
+estrellado y suelo visibles. Al dar Play, `Event BeginPlay` corre, el
+Timeline arranca, y la escena se oscurece por completo.
 
-**Estado del diagnóstico:** Recién abierto. Aún no se ha determinado si el
-problema persiste en:
-- El preview estático del editor únicamente, o también en Play In Editor (PIE)
-- El propio Material (aunque más completo, puede seguir faltando algo)
-- La configuración de la escena de prueba (Directional Light, Skylight,
-  Post Process, Exposure)
-- La colocación real del actor `BP_DayNight` en el nivel
+### Confirmado esta sesión
+- El problema ocurre específicamente en runtime (PIE), no en el editor.
+- El actor `BP_DayNight` sí está colocado en el nivel de prueba.
+- Intensity del `DirectionalLight` confirmado **idéntico** entre proyecto
+  original y migrado: **2.75 lux** ambos.
+- Subir manualmente el Intensity durante Play **no resuelve** el apagón —
+  **descartado como causa directa por valor numérico**.
+- Agregar un **segundo** Directional Light de prueba en la escena **sí
+  ilumina correctamente** — esto indica que el `DirectionalLight` original
+  de `BP_DayNight` no está aportando luz por alguna bandera/configuración
+  o conflicto, no por su valor de Intensity.
+- Ambos proyectos comparten la misma configuración de Auto Exposure en
+  Render Settings — descartado como causa.
+- `ExponentialHeightFog`: Fog Density `0.02`, Fog Height Falloff `0.2`, Fog
+  Max Opacity `1.0` — valores capturados, dentro de rango razonable, no se
+  identifica como causa evidente de apagón total (una densidad de 0.02 no
+  debería producir oscuridad completa).
+- `VolumetricCloud`: Planet Radius `6360.0`, Cloud Material
+  `m_SimpleVolumetricCloud_Ins` — capturado, pendiente comparar contra el
+  original si el problema persiste tras descartar las hipótesis de luz.
+- No hay conflicto de doble sistema de cielo — solo `BP_DayNight` está en
+  la escena de prueba.
+- Colisión de `SM_SkySphere` cambiada a `NoCollision` — cambio intencional
+  del usuario, confirmado sin relación al Bug 3.
 
-**Pendiente para la próxima respuesta de diagnóstico:** ver sección
-"Checklist para continuar" al final de este documento.
+### Hallazgo nuevo — jerarquía de componentes más completa de lo documentado
+Ver sección "Jerarquía de componentes confirmada" arriba. Existe un
+componente `Moon` con ícono de luz (idéntico al de `DirectionalLight`),
+anidado como hijo de `DirectionalLight`, y `SM_SkySphere` está attachado
+como hijo de `Moon`, no del Sol. Esta relación no estaba documentada en
+sesiones previas y es ahora la hipótesis principal.
+
+### Hipótesis activas para la próxima sesión (en orden de prioridad)
+
+**Hipótesis 1 — Unidades de Intensity distintas pese a mismo número**
+El campo Intensity de un Directional Light en Unreal tiene un dropdown de
+unidad (Lux / Candela / Unitless) junto al valor numérico. Un mismo número
+`2.75` puede representar magnitudes de luz completamente distintas según la
+unidad seleccionada. No confirmado si el dropdown coincide entre proyectos.
+
+**Hipótesis 2 — Conflicto de Atmosphere Sun Light Index entre Sol y Moon**
+Unreal permite un componente con `Atmosphere Sun Light` activado en índice 0
+(sol) y opcionalmente otro en índice 1 (luna). Si `DirectionalLight` y
+`Moon` comparten el mismo índice, pueden anularse entre sí o causar
+comportamiento indefinido en el cálculo de iluminación atmosférica.
+
+**Hipótesis 3 — Lógica de encendido/apagado Sol/Luna no documentada**
+Posible nodo en el EventGraph (no detectado aún en las exportaciones
+previas) que alterna visibilidad o intensidad entre `DirectionalLight` y
+`Moon` según la hora, y que podría estar dejando ambos apagados
+simultáneamente. Pendiente búsqueda con Ctrl+F.
+
+**Hipótesis 4 — Problema de configuración base del proyecto, no de BP_DayNight**
+Si las hipótesis 1–3 no revelan la causa, aislar con un Blueprint mínimo de
+prueba (solo los 4 componentes base, sin Moon, sin SkyLight, sin
+SM_SkySphere, sin Material custom, sin lógica en EventGraph) para
+determinar si el problema viene de algo dentro de BP_DayNight o de una
+configuración más general del proyecto (World Settings / Post Process
+Volume con override de Exposure).
+
+---
+
+## Plan de acción para la próxima sesión (en orden)
+
+1. 🔴 **Confirmar unidad de Intensity** del `DirectionalLight` (dropdown
+   junto al campo numérico: Lux / Candela / Unitless) y compararla contra
+   el proyecto original.
+2. 🔴 **Inspeccionar el componente `Moon`** — captura completa de su panel
+   Details (Transform, sección Light si la tiene, sección Atmosphere and
+   Cloud). Confirmar si tiene `Atmosphere Sun Light` activado y su
+   `Atmosphere Sun Light Index`.
+3. 🔴 **Inspeccionar el mismo dato en `DirectionalLight`** (Sol) — su
+   propio `Atmosphere Sun Light Index` — y confirmar que sea distinto al
+   de `Moon`.
+4. 🟡 **Buscar en el EventGraph** (`Ctrl+F`) nodos relacionados a `Moon`,
+   `Set Visibility`, `Set Intensity`, `Set Actor Hidden` — posible lógica
+   de alternancia Sol/Luna no documentada aún.
+5. 🟡 **Captura completa del track `Sun Yaw`** del Timeline — pendiente
+   desde hace varias sesiones, crítico por si la curva posiciona el sol
+   bajo el horizonte en `t=0`.
+6. ⚪ Si los puntos 1–5 no revelan la causa: ejecutar la **prueba de
+   aislamiento** — Blueprint nuevo mínimo (`BP_DayNight_TEST`) con solo los
+   4 componentes base, sin Material custom, sin Moon, sin lógica en
+   EventGraph. Colocar en el nivel (con el `BP_DayNight` original
+   desactivado) y dar Play.
+   - Si se ilumina correctamente → el problema está en algo agregado
+     después (Moon, SkyLight, SM_SkySphere, Material, o EventGraph) —
+     reintroducir uno por uno para aislar cuál rompe la iluminación.
+   - Si sigue negro → revisar configuración base del proyecto: World
+     Settings (Lightmass → Force No Precomputed Lighting) y Post Process
+     Volume (override de Exposure Min/Max EV100) en el nivel de prueba.
+7. ⚪ Revisar diferencia de 28 instrucciones de shader en `M_SkySphere`
+   (455 vs 483) — buscar si falta algún nodo menor adicional a
+   `MF_SunEclipse`.
 
 ---
 
@@ -221,40 +324,22 @@ problema persiste en:
 
 | Problema | Notas | Estado |
 |---|---|---|
-| Bug 3 — sin cielo/luz pese a Material reparado | Ver sección Bug 3 | 🔴 Activo — prioridad actual |
-| Track `Sun Yaw` sin capturar completo | Necesario para terminar de validar el Timeline | ⏳ Pendiente |
+| Bug 3 — sin cielo/luz en runtime | Ver sección Bug 3 e Hipótesis 1–4 | 🔴 Activo — prioridad actual |
+| Track `Sun Yaw` sin capturar completo | Pendiente desde varias sesiones, crítico para Bug 3 | 🔴 Pendiente próxima sesión |
+| Relación exacta entre `Moon` y `DirectionalLight` sin documentar | ¿Alternancia Sol/Luna? ¿Sincronización de rotación? No confirmado | 🔴 Pendiente próxima sesión |
 | Keyframes ocultos posibles en `DayEnded` | Verificar si hay un salto de valor cerca de t=24 | ⏳ Pendiente |
 | `Update Data` disparado por `Update` (cada frame) en vez de una vez por ciclo | No es bug de migración — diseño del original. Revisar al construir sistema de días/lunas | ⏳ Pendiente decisión de diseño |
 | Duplicado `gradient_sphere` / `GradientSphere` | Verificar cuál está realmente en uso en los materiales | ⏳ Pendiente |
 | Tipo exacto de variable `Day` (Integer vs Float) sin confirmar | Inferido del nodo Add, no confirmado desde panel Variables | ⏳ Pendiente |
-| Confirmar si faltan más Material Functions en `M_SkySphere` aparte de `MF_SunEclipse` | Conteo de instrucciones de shader aún no reverificado tras el fix | ⏳ Pendiente próxima sesión |
-| `MF_SunEclipse` recreada manualmente en vez de migrada | El Migrate nativo falla por incompatibilidad 5.5.4→5.4.4. Verificar que la reconstrucción manual sea funcionalmente idéntica al original (mismos cálculos internos) | ⏳ Pendiente verificación profunda |
+| Diferencia de 28 instrucciones de shader en M_SkySphere (455 vs 483) | Posible nodo/función menor faltante adicional a MF_SunEclipse | ⏳ Pendiente, prioridad menor |
+| `MF_SunEclipse` recreada manualmente en vez de migrada | El Migrate nativo falla por incompatibilidad 5.5.4→5.4.4. Verificar que la reconstrucción manual sea funcionalmente idéntica al original | ⏳ Pendiente verificación profunda |
 
 ---
 
-## Checklist para continuar (Bug 3 — próxima respuesta)
-
-Para acotar el Bug 3 necesito que confirmes lo siguiente:
-
-1. **¿Ya probaste en Play In Editor (PIE)?** El viewport de edición del
-   Blueprint es un preview estático — no ejecuta `Event BeginPlay` ni corre
-   el Timeline. Si aún no le diste Play a la escena de prueba, es el primer
-   paso antes de seguir diagnosticando el Material.
-2. **¿El actor `BP_DayNight` está colocado dentro del nivel de prueba?**
-   (Arrastrado al viewport del nivel, no solo abierto en su propio editor
-   de Blueprint.)
-3. **Conteo de instrucciones de shader actual** de `M_SkySphere` tras el
-   fix — ¿ya se acerca a 483, o sigue bajo?
-4. Captura del **Directional Light** en la escena de prueba: Intensity,
-   Affects World, y si el checkbox **Atmosphere/Fog** o similar está activado.
-5. Si el nivel de prueba tiene un actor **Sky Atmosphere** o **Sky Light**
-   además del `SM_SkySphere` — confirmar si coexisten o si hay conflicto
-   entre dos sistemas de cielo distintos en la misma escena.
-
----
-
-*Archivo actualizado — sesión Light Paradox (Bug 2 reparado parcialmente:
-MF_SunEclipse recreada manualmente tras fallo de Migrate por incompatibilidad
-de versión; parámetros de MI_SkySpherePhases confirmados completos y
-revalorados. Bug 3 abierto: sin cielo ni luz pese a Material reparado.)*
+*Archivo actualizado — sesión Light Paradox (Bug 3: hallazgo de jerarquía
+completa de componentes — componente `Moon` identificado como probable
+segunda luz direccional con `SM_SkySphere` attachado a él; Intensity
+descartado como causa directa; hipótesis de conflicto de Atmosphere Sun
+Light Index y lógica Sol/Luna no documentada abiertas; plan de acción
+detallado para próxima sesión.)*
 *Project: Light Paradox · Base: EasySurvivalRPGv5 (sistema Day/Night migrado de proyecto externo UE 5.5.4)*
