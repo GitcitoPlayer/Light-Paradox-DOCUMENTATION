@@ -222,10 +222,24 @@ ver `06_BLUEPRINT_BP_EquipmentComponent.md`, sección "CheckContainerSlotForItem
 
 Al confirmar el fix del Bug 2 en juego, se detectó un **problema distinto y
 nuevo**: el atributo de `EquipmentAttributes` (Ruta A, ver sección "Dos
-rutas independientes" arriba) solo se aplica si el ítem *también* tiene
-`ItemStates` asignado — lo cual no debería ser un requisito, porque
-`EquipmentAttributes` e `ItemStates` son campos independientes del ítem.
-Este es el **Bug 4**, documentado abajo, pendiente para la próxima sesión.
+rutas independientes" arriba) parecía solo aplicarse si el ítem *también*
+tenía `ItemStates` asignado. Diagnóstico posterior (ver Bug 4 completo abajo)
+**descartó esta correlación** — el bug es independiente de `ItemStates` y
+vive en la cadena base de ESRPGv5.
+
+### ⚠️ Advertencia — verificar que este fix sigue guardado antes de la próxima sesión
+
+En una sesión posterior se detectó que el bloque `OR` (B1/B2/B3) de esta
+sección **no estaba presente** en el grafo real de `CheckContainerSlotForItem`
+— la función había vuelto a mostrar solo la comparación `==` original sin el
+`OR`. Causa más probable: el fix se aplicó pero no se guardó (`Compile` +
+`Save`) antes de cerrar el editor/proyecto. **Antes de continuar con
+cualquier otro bug, confirmar en el editor que el bloque `OR` completo
+(Equal contra `Head Rune Word` + `Slot >= 14` + `Slot <= 22` + `AND` + `OR`
+final) sigue presente en `CheckContainerSlotForItem`. Si no está, rehacerlo
+siguiendo la fórmula lógica de esta sección y confirmar Compile + Save
+explícitamente (ícono de disco debe dejar de estar resaltado) antes de
+cerrar Unreal.**
 
 ---
 
@@ -303,91 +317,144 @@ sistemas de queue que manipulan arrays de widgets).
 **Estado:** 🔴 Activo — diagnóstico iniciado, pendiente de confirmación en
 próxima sesión antes de aplicar cualquier fix.
 
-### Síntoma confirmado por el usuario
+### Síntoma original reportado (correlación con ItemStates — DESCARTADA)
 
 Con una Rune Word que tiene:
 - `EquipmentAttributes`: 1 elemento (`EasyRPG.Attributes.Base.EnergyRegeneration`, Value `30.0`)
 - `ItemStates`: 1 elemento (`DT_States` → `State_Poison`)
 
-...al equipar la runa, `EnergyRegeneration` **sí** sube +30 correctamente,
-por cada runa colocada.
+...al equipar la runa en el **primer slot**, `EnergyRegeneration` sí sube
++30 correctamente. Al equipar una **segunda** runa igual en el segundo slot,
+el atributo no vuelve a subir. La hipótesis inicial fue que esto dependía de
+`ItemStates` — **descartada, ver sección "Síntoma real confirmado" abajo.**
 
-Si se elimina el elemento de `ItemStates` (dejándolo en 0 elementos) mientras
-`EquipmentAttributes` permanece igual (1 elemento, sin cambios), el bonus de
-`EnergyRegeneration` **deja de aplicarse**.
+### ✅ Wiring de `EquipmentChanged` confirmado — NO es la causa
 
-### Por qué esto no debería pasar según el diseño de datos
+Se inspeccionó directamente el fragmento del grafo entre el `Switch on
+E_EquipmentSlot` (que actualiza los meshes visibles por slot) y
+`Update Equipment Attributes`. Confirmado por captura:
 
-`EquipmentAttributes` e `ItemStates` son dos campos **hermanos e
-independientes** dentro de `STR_ItemData` — confirmado visualmente en el
-Row Editor de `DT_Items` (ambos aparecen como campos separados al mismo
-nivel, sin relación jerárquica entre sí). Además, se confirmó por captura
-que `CharacterAttributes` dentro del `Effect_Poison` referenciado por
-`State_Poison` está **vacío** (0 Array elements, 0 Map elements) — es decir,
-el bonus de `EnergyRegeneration` no puede estar viniendo de la Ruta B
-(`CharacterAttributes` vía Effect). Tiene que estar viniendo de la Ruta A
-(`EquipmentAttributes` directo del ítem), que no debería tener ninguna
-dependencia de `ItemStates`.
+```
+Switch on E_EquipmentSlot → [SET w/ Notify de mesh por slot, uno por cada
+  Equipment Slot] → (todas las ramas convergen en un nodo único) →
+  Update Footstep Settings → Update Equipment Attributes
+```
 
-### Hipótesis principal (no confirmada — requiere inspección de grafo)
+`Update Equipment Attributes` recibe su input `Equipment Attributes` desde
+esta cadena de funciones puras encadenadas (ninguna documentada aún en el
+proyecto — candidatas para inspección):
 
-El nodo/función responsable de leer `EquipmentAttributes` y aplicarlo
-(mencionado en el flujo de `EquipmentChanged` como `Update Equipment
-Attributes`, **nunca inspeccionado en detalle en este proyecto**) podría
-estar conectado, por error de wiring, al pin **`Loop Body`** del
-`For Each Loop` que itera sobre `Item States` en el Bloque B (ver flujo de
-`EquipmentChanged` arriba), en vez de tener su propia rama de ejecución
-independiente y anterior a ese loop.
+```
+Get Equipment Items (Target: Equipment Container)
+  → Exclude Broken Items
+  → Get Items Equipment Attributes
+  → Equipment Attributes (output)
+```
 
-Esto explicaría el síntoma exactamente:
-- Con `ItemStates` con ≥1 elemento → el `For Each Loop` dispara `Loop Body`
-  al menos una vez → si `Update Equipment Attributes` cuelga de ahí, se
-  ejecuta.
-- Con `ItemStates` vacío (0 elementos) → el `For Each Loop` **nunca**
-  dispara `Loop Body`, solo `Completed` → si `Update Equipment Attributes`
-  está enganchado a `Loop Body`, nunca se ejecuta.
+**Confirmado: no hay ningún `For Each Loop` de `Item States` antes de
+`Update Equipment Attributes`.** La cadena es lineal e incondicional — se
+ejecuta siempre que cambia el equipo, sin importar si el ítem tiene
+`ItemStates` o no. Esto **descarta por completo** la hipótesis original de
+"wiring colgado del `Loop Body`".
 
-Es el mismo tipo de patrón de bug silencioso de wiring que produjo el Bug 3
-(ver Lección de Arquitectura arriba), pero en el exec chain en vez de en un
-pure function.
+### Prueba de aislamiento — confirmado que `ItemStates` NO es la variable relevante
 
-> **Nivel de confianza:** hipótesis fuerte basada en el patrón del síntoma,
-> **no confirmada por inspección directa del grafo**. No aplicar ningún fix
-> sin completar primero el diagnóstico de la checklist de abajo.
+El usuario ejecutó tres pruebas control:
+
+1. **Re-equipar la misma runa (sin ItemStates) en el mismo slot / en otro
+   slot vacío** → el atributo sigue sin sumar. Descarta timing/lectura
+   obsoleta de `Get Equipment Items` como causa (una relectura forzada no
+   corrige nada).
+2. **Esperar varios segundos sin tocar nada tras equipar sin ItemStates**
+   → el atributo nunca "se corrige solo". Descarta que dependa de un
+   re-disparo posterior de `EquipmentChanged` vía tick de Status Effect.
+3. **Desconectar por completo la lógica de Estados de Light Paradox
+   (Bloque A/B) de `EquipmentChanged`, dejando solo la cadena base de
+   ESRPGv5** → el patrón se mantiene idéntico: el primer slot suma el
+   atributo, los siguientes no, **sin importar `ItemStates` en absoluto**.
+
+**Conclusión confirmada: Bug 4 no tiene relación con `ItemStates` ni con
+la lógica de Light Paradox. El bug vive completamente dentro de la cadena
+base de ESRPGv5** (`Get Equipment Items` → `Exclude Broken Items` →
+`Get Items Equipment Attributes` → `Update Equipment Attributes`).
+
+### Síntoma real confirmado
+
+Al equipar múltiples Rune Words del mismo tipo de atributo
+(`EnergyRegeneration`) en slots distintos: **solo el valor del primer slot
+llega a aplicarse.** Los valores de slots subsecuentes no se suman —
+tampoco se sobreescriben visiblemente porque el valor es idéntico (30.0 en
+ambos casos), lo que hace parecer que "no pasa nada" en el segundo slot.
+
+### Hallazgo relacionado (bug distinto, registrado pero fuera de alcance por ahora)
+
+Durante las pruebas se detectó un bug adicional en la cadena de visibilidad
+de slots de runa: al desequipar la runa del slot 1 (con el slot 2 también
+ocupado), la cadena de reacción visual dejaba un par de slots vacíos de
+forma inconsistente; al volver a colocar una runa en el slot vacío
+resultante, esa runa sí sumaba correctamente su valor sobre el atributo ya
+existente. **El usuario ya tiene una solución de diseño planeada para esto
+— no se investiga en esta fase.** Registrado como Bug 5 en la tabla de
+Deuda Técnica al final de este archivo, solo como pista relacionada: es
+coherente con la hipótesis de que la agregación de atributos (o la cadena
+de visibilidad de runas) agrupa por `EquipmentType`/tag compartido en vez
+de por slot individual — el mismo problema de fondo que causó el Bug 2
+(ver `06_BLUEPRINT_BP_EquipmentComponent.md`, donde todos los slots
+duplicados de Head Rune Word comparten `EquipmentType = HeadRuneWord (7)`).
+
+### Nueva hipótesis principal — Map keyed por GameplayTag sobreescribiendo en vez de acumular
+
+Candidato: `Get Items Equipment Attributes` (o la función real donde ocurra
+la agregación — ubicación exacta aún sin confirmar, puede vivir en
+`BP_EquipmentComponent` o `BP_ItemsLibrary`, mismo patrón de incertidumbre
+que `Item Is Equipment`) probablemente itera los ítems equipados y agrega
+cada `GameplayTag` + `Value` a un **Map** usando un nodo `Add`/`Set` **sin
+verificar antes si esa Key ya existe**. Si dos ítems equipados comparten el
+mismo `GameplayTag` (`EnergyRegeneration`), el segundo **sobreescribe** la
+entrada del primero en el Map en vez de sumarse a ella. Como ambas runas de
+prueba tienen el mismo valor (30.0), el resultado final se ve idéntico a
+"no se aplicó nada nuevo" — pero en realidad hubo una sobreescritura
+silenciosa con el mismo número.
+
+> **Nivel de confianza:** hipótesis, no confirmada. Requiere inspección
+> directa del interior de la función real de agregación antes de aplicar
+> cualquier fix.
 
 ### Checklist de diagnóstico para la próxima sesión
 
-1. Abrir `BP_Character_Player` → función `EquipmentChanged`.
-2. Localizar el nodo `Update Equipment Attributes` (nombre puede variar
-   ligeramente — buscar el nodo que efectivamente lee `EquipmentAttributes`
-   del ítem).
-3. Click en el pin de entrada de ejecución (flecha blanca izquierda) de ese
-   nodo. Seguir el cable **hacia atrás** visualmente. Confirmar una de dos:
-   - **(A)** Viene de un pin `Loop Body` de un `For Each Loop` sobre
-     `Item States` → confirma la hipótesis.
-   - **(B)** Viene de un `Sequence`, `Branch`, o está en la cadena principal
-     fuera de cualquier loop → descarta la hipótesis, requiere inspección
-     más profunda del interior de la función.
-4. Si hay duda visual: agregar `Print String` (Development Only, target:
-   **Output Log**, no pantalla) justo antes del nodo `Update Equipment
-   Attributes`, texto: `"Update Equipment Attributes EJECUTADO"`.
-5. Probar en PIE dos veces:
-   - Equipar runa **con** `ItemStates` asignado → revisar si el log aparece.
-   - Equipar runa **sin** `ItemStates` (0 elementos) → revisar si el log
-     **no** aparece.
-6. Según resultado:
+1. Abrir `BP_EquipmentComponent`. Si `Get Items Equipment Attributes` no
+   está ahí, buscarla en `BP_ItemsLibrary` (mismo patrón de incertidumbre
+   que `Item Is Equipment` — confirmar ubicación real y documentarla).
+2. Doble click para abrir el interior de la función.
+3. Buscar visualmente un nodo tipo **Map** (variable Map, o nodo
+   `Add (Map)` / `Set (Map)`) dentro de un loop que itere sobre los ítems
+   equipados.
+4. Si se encuentra: click en el pin de entrada de ejecución del nodo
+   `Add`/`Set` y seguir el cable **hacia atrás**. Confirmar si antes hay un
+   `Find (Map)` + `Branch` (que verificaría si la Key ya existe y sumaría
+   al valor existente) o si el `Add`/`Set` corre directo sin ese chequeo.
+5. Si hay duda visual: agregar un `Print String` (Development Only,
+   **Output Log**) justo antes del nodo que entrega el `Equipment
+   Attributes` de salida de la función, imprimiendo el `Length` del
+   array/map resultante y, si es posible, cada elemento (`GameplayTag` +
+   `Value`) vía un `For Each Loop` temporal de depuración.
+6. Probar en PIE: equipar runa en slot 1 → revisar log → equipar runa en
+   slot 2 → revisar log de nuevo.
+7. Comparar resultados:
 
-| Resultado del log | Diagnóstico | Siguiente paso |
+| Resultado del segundo log | Diagnóstico | Siguiente paso |
 |---|---|---|
-| No aparece cuando `ItemStates` está vacío | Hipótesis confirmada — wiring colgado del `Loop Body` | Mover el nodo fuera del loop, a su propia rama de ejecución previa (ej. vía `Sequence`), independiente de si `Item States` tiene elementos o no |
-| Sí aparece siempre, incluso sin `ItemStates` | Hipótesis descartada — el problema está *dentro* de `Update Equipment Attributes` (posible `Branch` interno mal condicionado leyendo `ItemStates.Length`) | Requiere ver el interior completo de la función — no intentar fix sin esa inspección |
+| Muestra 2 entradas separadas, cada una con 30.0 | La agregación en este punto es correcta — el problema está más adelante, dentro de `Update Equipment Attributes` mismo (posiblemente toma solo el primer/último elemento del array en vez de sumar todos) | Inspeccionar el interior de `Update Equipment Attributes` |
+| Muestra 1 sola entrada con 30.0 | Confirma la hipótesis — el Map sobreescribe por Key en vez de acumular, dentro de `Get Items Equipment Attributes` | Insertar un `Find (Map)` + `Branch` antes del `Add`/`Set`: si la Key existe, sumar el nuevo `Value` al existente antes de escribir; si no existe, `Add` normal |
 
-7. Una vez identificada la causa exacta, actualizar esta sección con el fix
-   aplicado (siguiendo el mismo formato usado para Bug 2 y Bug 3), y
-   documentar por primera vez el interior de `Update Equipment Attributes`
-   en un archivo nuevo o en `07_BLUEPRINT_BP_Character_Player.md`, ya que
-   actualmente no existe documentación de esa función en ningún .md del
-   proyecto.
+8. Una vez identificada la causa exacta, actualizar esta sección con el fix
+   aplicado (mismo formato que Bug 2 y Bug 3), y documentar por primera vez
+   el interior de las funciones involucradas (`Get Equipment Items`,
+   `Exclude Broken Items`, `Get Items Equipment Attributes`,
+   `Update Equipment Attributes`) en un archivo nuevo o en
+   `07_BLUEPRINT_BP_Character_Player.md` / `06_BLUEPRINT_BP_EquipmentComponent.md`
+   según dónde vivan realmente — actualmente ninguna tiene documentación en
+   el proyecto.
 
 ---
 
@@ -420,9 +487,20 @@ Terror, Confundir, Cegar
   pin `Handles` de `APPEND` y `Make STR_RuneStateHandles` leyendo
   directamente de una función pura (`Break STR_RuneStateHandles`) en vez de
   una variable persistente. Fix: Local Variable `LocalHandlesToSave`.
-- Bug 4 (EquipmentAttributes depende erróneamente de ItemStates) —
-  🔴 **NUEVO, activo.** Ver sección Bug 4 completa arriba. Prioridad para
-  la próxima sesión.
+- Bug 4 (EquipmentAttributes no se acumula entre múltiples slots) —
+  🔴 **Activo. Hipótesis corregida esta sesión** — descartada relación con
+  `ItemStates` (confirmado por prueba de aislamiento con la lógica de
+  Estados desconectada). Nueva hipótesis: Map keyed por GameplayTag
+  sobreescribiendo en vez de acumular, dentro de la cadena base de ESRPGv5
+  (`Get Equipment Items` → `Exclude Broken Items` →
+  `Get Items Equipment Attributes` → `Update Equipment Attributes`).
+  Checklist de diagnóstico lista para la próxima sesión — ver sección
+  Bug 4 completa arriba.
+- Bug 5 (cascada de slots vacíos al desequipar runa de un slot inferior) —
+  🟡 **Nuevo, detectado como efecto colateral durante pruebas de Bug 4.**
+  Con Bug 4 en curso no bloqueante para el gameplay actual. El usuario ya
+  tiene solución de diseño planeada — no se investiga en esta fase. Ver
+  nota en sección Bug 4 ("Hallazgo relacionado").
 
 ---
 
@@ -432,9 +510,10 @@ Terror, Confundir, Cegar
 |---|---|
 | BaseState en BP_Character_Base | Evaluar migración para todos los personajes | ⏳ |
 | Estados en consumibles | Pospuesto — uso ambiguo | ⏳ |
-| Causa raíz del re-disparo de EquipmentChanged en cada tick de daño | ⏳ Mitigado con guard, causa raíz sin inspeccionar. Sigue ocurriendo (2 veces por frame + re-disparo cada ~1s), pero ya no es bloqueante ahora que el Bug 3 está resuelto. |
+| Causa raíz del re-disparo de EquipmentChanged en cada tick de daño | ⏳ Mitigado con guard, causa raíz sin inspeccionar. Sigue ocurriendo (2 veces por frame + re-disparo cada ~1s), pero ya no es bloqueante ahora que el Bug 3 está resuelto. Confirmado esta sesión que este re-disparo NO es la causa de Bug 4 (probado con espera prolongada sin corrección espontánea del atributo). |
 | Revisar patrón "pure function → múltiples consumidores" en otros sistemas | Ver Lección de arquitectura arriba — candidato: `UI_CraftingQueue` y otros sistemas de queue/array | ⏳ |
-| **Nuevo:** Documentar el interior de `Update Equipment Attributes` | Nunca inspeccionado en detalle — necesario para cerrar Bug 4 | 🔴 Prioridad próxima sesión |
+| **Actualizado:** Documentar el interior de `Get Equipment Items`, `Exclude Broken Items`, `Get Items Equipment Attributes` y `Update Equipment Attributes` | Ninguna de las cuatro tiene documentación en el proyecto. Necesario para cerrar Bug 4 — ver checklist en sección Bug 4 | 🔴 Prioridad próxima sesión |
+| Bug 5 — cascada de slots vacíos al desequipar runa | Detectado como efecto colateral durante pruebas de Bug 4. Solución de diseño ya planeada por el usuario — no investigar todavía | 🟡 Pendiente, sin prioridad asignada por decisión del usuario |
 
 ---
 
@@ -445,15 +524,16 @@ Terror, Confundir, Cegar
 | Error de stack duplicado en Load Status Effect | Mitigado con guard CheckStatusEffectByHandle en ApplyState | ✅ Mitigado |
 | BaseState solo en BP_Character_Undead2 | Evaluar migración a BP_Character_Base | ⏳ |
 | Pin ItemStates desconectado en Make Item (BP_ItemsLibrary) | Causaba Bug 1 completo | ✅ Resuelto |
-| Bug 2 — CheckContainerSlotForItem fallaba para slots de runa duplicados | Causa raíz: comparación EquipmentType==Slot rota para índices 14-22. Fix: OR adicional. Ver `06_BLUEPRINT_BP_EquipmentComponent.md` | ✅ Resuelto |
+| Bug 2 — CheckContainerSlotForItem fallaba para slots de runa duplicados | Causa raíz: comparación EquipmentType==Slot rota para índices 14-22. Fix: OR adicional. Ver `06_BLUEPRINT_BP_EquipmentComponent.md`. **⚠️ Verificar al abrir la próxima sesión que el fix sigue presente y guardado en el grafo — se detectó que pudo no haberse guardado tras la sesión en que se aplicó.** | ✅ Resuelto (pendiente reverificación) |
 | Bug 3 — remoción de Estado al desequipar no funciona | Causa raíz: pure function reevaluada en vez de variable persistente. Fix: Local Variable `LocalHandlesToSave`. | ✅ Resuelto |
-| **Bug 4 — EquipmentAttributes no se aplica sin ItemStates** | Sospecha de wiring de `Update Equipment Attributes` colgado del `Loop Body` del For Each Loop de Item States. Ver checklist de diagnóstico completa arriba. | 🔴 **Activo — prioridad próxima sesión** |
+| **Bug 4 — EquipmentAttributes no se acumula entre múltiples slots del mismo tipo** | Descartada relación con ItemStates. Nueva hipótesis: Map por GameplayTag sobreescribiendo en Get Items Equipment Attributes (o función equivalente de ESRPGv5, no documentada). Ver checklist de diagnóstico completa en sección Bug 4. | 🔴 **Activo — prioridad próxima sesión** |
+| **Bug 5 (nuevo) — cascada de slots vacíos al desequipar runa de slot inferior** | Detectado durante pruebas de Bug 4. Al desequipar runa del slot 1 con slot 2 ocupado, la cadena de visibilidad deja slots vacíos inconsistentes; el slot vacío resultante sí acumula el atributo correctamente al recibir una runa nueva. Posible relación con el mismo problema de fondo del Bug 2 (EquipmentType compartido entre slots duplicados). Usuario ya tiene solución de diseño planeada. | 🟡 Registrado — no investigar todavía, por decisión del usuario |
 | Print String "No es runa" debug temporal en UI_ItemSlot.OnDrop | Pendiente eliminar — su comportamiento confuso durante el diagnóstico del Bug 2 quedó explicado por la causa raíz real (CheckContainerSlotForItem), no por la lógica de detección de runa en sí | ⏳ |
-| Causa raíz de re-disparo de EquipmentChanged por tick de daño | No inspeccionada — solo mitigada con guard. Confirmado que sigue ocurriendo, 2 veces por frame (Slot 0 + Slot 7) más el re-disparo cada ~1s | ⏳ Media prioridad |
+| Causa raíz de re-disparo de EquipmentChanged por tick de daño | No inspeccionada — solo mitigada con guard. Confirmado que sigue ocurriendo, 2 veces por frame (Slot 0 + Slot 7) más el re-disparo cada ~1s. Confirmado esta sesión que NO es la causa de Bug 4. | ⏳ Media prioridad |
 | Print String de diagnóstico del Bug 3 (PUNTO 1, 1b, 1c, ADD REAL, FIND REMOVE, MAP REMOVE EJECUTADO, REMOVE - Success, EQCHANGED START, CONTAINS KEY) | Mantenidos intencionalmente por decisión del usuario, para mostrar el trabajo de debugging al cliente. Pendientes de limpieza en sesión futura. | ⏳ Limpieza pospuesta — decisión del usuario |
 | `BP_RemoveEffectTrigger` (trigger de prueba) | Puede quedar en el nivel como herramienta de testing o eliminarse — decisión del usuario. | ⏳ Sin decisión — bajo impacto |
 | Revisar patrón pure-function en otros sistemas de arrays/queues | Ver Lección de arquitectura arriba | ⏳ Sin prioridad asignada |
-| Interior de `Update Equipment Attributes` sin documentar | Necesario para cerrar Bug 4 correctamente | 🔴 Prioridad próxima sesión |
+| Interior de `Get Equipment Items` / `Exclude Broken Items` / `Get Items Equipment Attributes` / `Update Equipment Attributes` sin documentar | Necesario para cerrar Bug 4 correctamente. Ninguna de las cuatro funciones ha sido inspeccionada en detalle en el proyecto. | 🔴 Prioridad próxima sesión |
 
 ---
 
@@ -489,9 +569,13 @@ Terror, Confundir, Cegar
 
 ---
 
-*Archivo actualizado — sesión Light Paradox (Bug 2 RESUELTO, Bug 4 nuevo abierto)*
-*Cambios: Bug 2 marcado como resuelto con causa raíz y referencia cruzada a 06_BLUEPRINT_BP_EquipmentComponent.md,
-sección nueva "Dos rutas independientes de modificación de stats" (EquipmentAttributes vs CharacterAttributes)
-agregada para prevenir futuras confusiones diagnósticas, Bug 4 documentado completo con hipótesis, nivel de
-confianza explícito, y checklist de diagnóstico paso a paso lista para la próxima sesión*
+*Archivo actualizado — sesión Light Paradox (Bug 4 — hipótesis corregida tras pruebas de aislamiento, Bug 5 nuevo registrado)*
+*Cambios: Bug 4 — descartada la correlación con ItemStates tras tres pruebas de aislamiento (re-equipar sin ItemStates,
+espera prolongada, desconexión total de la lógica de Estados de Light Paradox); confirmado por captura que el wiring
+de EquipmentChanged entre Switch on E_EquipmentSlot y Update Equipment Attributes es lineal, sin loops — hipótesis
+de "Loop Body colgado" descartada; nueva hipótesis: Map por GameplayTag sobreescribiendo en vez de acumular dentro
+de la cadena base de ESRPGv5 (Get Equipment Items → Exclude Broken Items → Get Items Equipment Attributes →
+Update Equipment Attributes); checklist de diagnóstico reescrita para la nueva hipótesis; Bug 5 nuevo registrado
+(cascada de slots vacíos al desequipar runa de slot inferior) — pendiente por decisión del usuario, con solución de
+diseño ya planeada; advertencia agregada en Bug 2 para reverificar que el fix del OR sigue guardado en el grafo real*
 *Project: Light Paradox · Base: EasySurvivalRPGv5 · UE 5.4.4*
