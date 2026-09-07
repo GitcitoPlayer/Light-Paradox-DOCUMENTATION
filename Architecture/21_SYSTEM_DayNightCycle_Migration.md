@@ -311,6 +311,125 @@ EventGraph ni el Timeline.
 
 ---
 
+### Bug RESUELTO — causa raíz confirmada: `Sunrise Time` / `Sunset Time` en `0.0`
+
+**Estado: ✅ RESUELTO y confirmado en juego esta sesión.**
+
+**Causa raíz confirmada:** tanto en la instancia de `BP_DayNight` en el
+nivel como en los **Class Defaults** de la clase, `Sunrise Time` y
+`Sunset Time` estaban en `0.0` ambos. Además, ninguna de las dos variables
+tenía **Instance Editable** activado, por lo que ni siquiera aparecían en
+el panel Details del nivel para poder detectarlo a simple vista — había
+que abrir el Blueprint y activar el ojo en el panel Variables para
+exponerlas.
+
+Con ambos en `0.0`, `In Range(Time, Min=0, Max=0)` (con `Inclusive Min` e
+`Inclusive Max` activados) solo devuelve `True` en el instante exacto
+`Time == 0.0` — en cualquier otro momento del ciclo devuelve `False`. Como
+la lógica usa `NOT(In Range(...))`, el resultado era `True` (es de noche)
+prácticamente todo el tiempo, sin importar cuántos ciclos transcurrieran.
+Esto afectaba **simultáneamente** al encendido/apagado de luces
+(`For Each Loop → Turn on/Off Light`) y al trigger de Poison nuevo (ver
+`22_SYSTEM_LunarPhases_EclipseStates.md`).
+
+**Fix aplicado:**
+1. Activado el ojo (Instance Editable) de `Sunrise Time` y `Sunset Time`
+   en el panel Variables de `BP_DayNight`.
+2. `Sunrise Time = 6.0`, `Sunset Time = 18.0` — aplicado tanto en Class
+   Defaults de la clase como en la instancia del nivel.
+
+**Confirmado en juego:** el Poison ya deja de aplicarse durante las horas
+de día y vuelve a activarse de noche — ver `22_SYSTEM_LunarPhases_EclipseStates.md`
+para el detalle de la prueba con `State_Poison`.
+
+**Efecto pendiente de confirmar por completo:** el Problema Visual 1 (cielo
+iluminado de noche) mejoró, pero el usuario reporta que falta terminar de
+validarlo — no se da por cerrado todavía, ver nota abajo.
+
+---
+
+## ⚠️ Nuevo hallazgo esta sesión — desincronización entre lógica día/noche y curva visual `Sun Yaw`
+
+**Estado: 🔴 Pendiente de decisión de diseño — no es un bug de wiring.**
+
+Tras el fix de `Sunrise Time`/`Sunset Time`, el usuario reporta el
+siguiente comportamiento en una corrida completa de Play:
+
+1. Al iniciar: cielo estrellado, de noche, Poison activo.
+2. La luna llega a su punto máximo visual.
+3. El Poison se desactiva (`Time` cruza `Sunrise Time = 6`) — **pero el
+   cielo sigue estrellado y la luna sigue en el cielo.**
+4. Más tarde, el cielo rota, se mete la luna, sale el sol (visual de
+   alba/aurora, en estado de eclipse).
+5. El sol llega a su punto máximo visual.
+6. El Poison se reactiva (`Time` cruza `Sunset Time = 18`) — **pero
+   visualmente todavía es de día, no hay luna en el cielo.**
+7. Luego se mete el sol, sale la luna con cielo estrellado, y se repite.
+
+### Causa raíz (diagnóstico, no requiere inspección adicional para confirmarla)
+
+Hay **dos sistemas independientes** corriendo sobre la misma variable
+`Time`, nunca calibrados entre sí:
+
+- **Sistema lógico** — `CheckLight → In Range(Time, Sunrise Time, Sunset
+  Time)`. Ahora con `6`/`18`, decide luces y Poison. Es un simple
+  booleano día/noche sin relación directa con ningún valor de rotación.
+- **Sistema visual** — Float Track `Sun Yaw` del Timeline
+  (`Time=0 → 0°`, `Time=24 → 360°`, lineal), que rota el
+  `DirectionalLight` y, por la jerarquía de componentes ya documentada
+  (`Moon` → `SM_SkySphere`), arrastra consigo la posición visual de luna
+  y estrellas. **Estos keyframes son valores de prueba puestos para
+  resolver el Bug 4** (no había movimiento visual en absoluto) — nunca
+  fueron calibrados para que el sol esté sobre el horizonte
+  específicamente entre `Time=6` y `Time=18`.
+
+Como ambos sistemas leen la misma variable `Time` pero con criterios
+independientes (uno un simple umbral numérico, el otro una curva de
+rotación sin relación definida con ese umbral), el momento en que el
+Poison se activa/desactiva no coincide con lo que el jugador ve en el
+cielo. **No hay ningún pin desconectado ni error de lógica que corregir
+en el wiring** — es una curva sin calibrar, que ya estaba marcada como
+pendiente ("valores de prueba son provisionales — falta definición de
+diseño final de la curva") desde la sesión del Bug 4.
+
+### Propuesta a validar con el líder de proyecto
+
+Convención sugerida, consistente con los umbrales lógicos ya aprobados
+(`Sunrise=6` / `Sunset=18`):
+
+| Momento | Time | Evento visual |
+|---|---|---|
+| Sale el sol | 6 | Sol aparece en el horizonte |
+| Punto máximo del sol | 12 | Sol en el cenit |
+| Se mete el sol / sale la luna | 18 | Transición sol↔luna |
+| Punto máximo de la luna | 0 / 24 | Luna en el cenit |
+| Se mete la luna | 6 | Vuelve a empezar el ciclo |
+
+Con esta convención, "luna en el cielo" coincidiría exactamente con el
+rango en que el Poison está activo (`18–6`), y "sol en el cielo" con el
+rango de día (`6–18`) — el resultado más intuitivo para el jugador.
+
+**Pregunta pendiente de respuesta del líder de proyecto:** ¿se aprueba
+esta convención de horarios, o se prefiere otro reparto? Sin esta
+aprobación no se debe tocar la curva `Sun Yaw` — el fix depende
+directamente de esta decisión.
+
+### Acción pendiente antes de recalibrar la curva (próxima sesión)
+
+Para calibrar `Sun Yaw` con precisión hace falta primero medir, no
+adivinar, en qué valor real de `Time` ocurre cada transición visual
+actual:
+
+1. Agregar un `Print String` temporal del valor `Time` (o usar `WBP_Time`
+   si ya está en el Level Blueprint) mientras se corre el juego.
+2. Anotar el valor de `Time` en: luna en su punto máximo, luna
+   metiéndose, sol saliendo, sol en su punto máximo, sol metiéndose.
+3. Con esos 5 valores reales, ajustar los keyframes de `Sun Yaw`
+   (probablemente se necesiten más de los 2 keyframes actuales) para que
+   coincidan con la convención aprobada por el líder de proyecto.
+
+---
+
 ## Comportamiento Visual Confirmado (descripción del usuario — Asset Original)
 
 - A lo largo de un ciclo (Time 0→24), el cielo se mueve de forma continua.
@@ -464,7 +583,9 @@ utilidad de UI a futuro.
 | Problema | Notas | Estado |
 |---|---|---|
 | Bug 5 — Sun Yaw vacío en original pero el original funciona visualmente | Contradicción sin resolver. No bloqueante — sistema ya funcional con fix práctico del Bug 4. PDF no aporta información nueva sobre esto. | 🟣 Pendiente investigación, sin prioridad urgente |
-| Problema Visual 1 — cielo se ilumina de noche | Heredado del original. Nueva pista sesión de implementación de Poison: el booleano `NOT(In Range(Time, Sunrise/Sunset Time))` que alimenta el encendido/apagado de luces nunca cambia de valor — candidato directo a causa raíz compartida. Ver `22_SYSTEM_LunarPhases_EclipseStates.md`. | 🔴 Pendiente — revisar Sunrise/Sunset Time como primera acción de la próxima sesión |
+| Problema Visual 1 — cielo se ilumina de noche | Heredado del original. Mejoró tras fijar `Sunrise Time`/`Sunset Time` a `6.0`/`18.0` (antes ambos en `0.0`) — pendiente de validar por completo si quedó resuelto o si falta ajuste adicional en Intensity del Directional Light. | 🟡 Pendiente terminar de validar |
+| **Sunrise Time / Sunset Time en `0.0`, sin Instance Editable** | ✅ **RESUELTO esta sesión.** Causa raíz de: (1) Poison "permanente" (ver `22_SYSTEM_LunarPhases_EclipseStates.md`), (2) probable causa raíz de Problema Visual 1. Fix: variables expuestas (Instance Editable) + `Sunrise=6.0`/`Sunset=18.0` en Class Defaults e instancia. Confirmado en juego para el caso del Poison. | ✅ Resuelto |
+| **Desincronización entre lógica día/noche (`Sunrise`/`Sunset Time`) y curva visual (`Sun Yaw`)** | Nuevo hallazgo esta sesión — ver sección dedicada arriba. El Poison y las luces cambian según `Time=6/18`, pero el sol/luna visualmente no están calibrados para aparecer/desaparecer en esos mismos valores de `Time`. Requiere aprobación del líder de proyecto sobre convención de horarios antes de recalibrar `Sun Yaw`. | 🔴 Pendiente aprobación de diseño + recalibración de keyframes |
 | Problema Visual 2 — estrellas rotando | Heredado del original. PDF confirma que no hay parámetro de rotación en el grupo Stars de MI_SkySpherePhases — refuerza hipótesis de que la rotación viene del transform del mesh, no del material. Pendiente re-evaluar a velocidad de juego real antes de decidir si requiere fix. | 🟡 Pendiente sesión de corrección visual |
 | Optimización — framerate reportado por cliente | No verificado aún por el equipo. Candidatos: VolumetricCloud, Update Data por frame, CheckLight con Total Day Night Time=1 (dispara cada 1s) | 🔴 Pendiente perfilar antes de optimizar |
 | Valores definitivos de keyframes Sun Yaw | Actualmente 0°→360° como prueba. Falta definición de diseño final (interpolación, rango, timing de ocaso ~18h) | 🟡 Pendiente definición de diseño |
@@ -483,18 +604,19 @@ utilidad de UI a futuro.
 
 ## Checklist de Pendientes — próxima sesión (en orden sugerido)
 
-1. 🔴 **(Nueva prioridad #1, confirmada esta sesión)** Revisar valores de
-   `Sunrise Time` / `Sunset Time` en la instancia de `BP_DayNight` en el
-   nivel — confirmado que el booleano "es de noche" nunca cambia a
-   `False`. Candidato a causa raíz compartida con Problema Visual 1 y con
-   el bug de Poison permanente. Ver `22_SYSTEM_LunarPhases_EclipseStates.md`.
-2. 🔴 **Confirmar nombre real del actor** (`BP_DayNight` vs
+1. 🔴 **(Nueva prioridad #1, esta sesión)** Obtener aprobación del líder de
+   proyecto sobre la convención de horarios sol/luna propuesta (sol
+   visible `6–18`, luna visible `18–6`, picos en `12` y `0/24`
+   respectivamente) — ver sección "Nuevo hallazgo esta sesión" arriba. Sin
+   esto no se debe tocar la curva `Sun Yaw`.
+2. 🔴 Una vez aprobada la convención: medir con `Print String`/`WBP_Time`
+   el valor real de `Time` en cada transición visual actual (luna en
+   pico, luna metiéndose, sol saliendo, sol en pico, sol metiéndose) y
+   recalibrar los keyframes de `Sun Yaw` para que coincidan.
+3. 🔴 **Confirmar nombre real del actor** (`BP_DayNight` vs
    `BP_DayNightCycle`) directamente en el Content Browser — corregir este
    archivo si es necesario.
-3. 🟡 **Definir valores finales de la curva `Sun Yaw`** — reemplazar los
-   keyframes de prueba (0°→360°) por la curva de diseño real, considerando
-   el timing de ocaso ~Time=18 descrito por el usuario.
-3. 🟡 **Investigar Problema Visual 1** (cielo iluminado de noche) —
+4. 🟡 **Investigar Problema Visual 1** (cielo iluminado de noche) —
    revisar si `CheckLight`/`MPC_IsLight` debe también controlar
    intensidad del `SkyAtmosphere`/`DirectionalLight`, no solo las luces
    del nivel vía `BPI_IsLight`.
