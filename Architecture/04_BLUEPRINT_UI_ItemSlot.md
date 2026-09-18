@@ -2,6 +2,7 @@
 ### Widget: UI_ItemSlot
 ### Base Asset: EasySurvivalRPGv5
 ### Fuente: Exports .txt raw — sesión Light Paradox
+### Actualizado: sesión Light Paradox — Fix candados fantasma en Action/Crafting Queue
 
 ---
 
@@ -28,6 +29,15 @@
 | `Icon` | Image (UMG widget) | Widget imagen del ícono |
 | `SuccessChance` | Integer | Probabilidad de éxito al asignar runa. Default 100. Asignado por slot en Designer. |
 | `bIsLocked` | Boolean | True cuando el slot tiene candado activo. Rechaza drops mientras es True. |
+
+> **⚠️ Nota crítica confirmada en sesión de fix de candados fantasma:** `SlotNumber` es un
+> índice **local al Container que lo contiene** — no es un ID único global en todo el juego.
+> `InventoryContainer` y `EquipmentContainer` indexan sus propios slots de forma independiente
+> desde 0. Es esperado por diseño que, por ejemplo, el slot 8 del inventario y el slot 8 del
+> `EquipmentContainer` (`BodyRuneWord`) compartan el mismo número. Cualquier lógica que
+> compare `SlotNumber` sin primero confirmar de qué `Container` proviene corre el riesgo de
+> tratar un slot de inventario como si fuera un slot de equipamiento (o viceversa). Ver
+> sección "OnDrop" más abajo para el fix aplicado sobre este problema.
 
 ---
 
@@ -206,7 +216,17 @@ Entry (PointerEvent) →
 ## OnDrop
 **Tooltip:** Try to move item to slot.
 
-### Flujo completo con intercepción de runas y sistema de probabilidad (Lógica 1 rediseño)
+### Flujo completo con intercepción de runas y sistema de probabilidad (Lógica 1 rediseño + Fix candados fantasma)
+
+> **✅ Actualizado — sesión Light Paradox (Fix candados fantasma en Action/Crafting Queue).**
+> El check original de "es runa" solo evaluaba el tag del ítem arrastrado, sin validar si el
+> **slot destino** (`self`) era realmente un slot de runa dentro del `EquipmentContainer`. Esto
+> causaba que soltar una Rune Word en cualquier `UI_ItemSlot` (inventario, hotbar, u otros
+> slots de equipamiento no-runa como Head/Body/Pants) disparara el flujo ÉXITO/FALLO,
+> llamara a `GetNextRuneSlot` con un `SlotNumber` fuera de su `Select`, recibiera `None`, y
+> generara un candado fantasma en `UI_CraftingQueue` (`Accessed None trying to read property
+> LockedSlot` / `PendingLockedSlot`). Ver `13_WIDGET_UI_CraftingQueue.md` para el detalle
+> completo del síntoma y los pendientes de hardening asociados.
 
 ```
 Entry (Operation, PointerEvent) →
@@ -229,17 +249,31 @@ Entry (Operation, PointerEvent) →
                 → True  → TryToRepairItem_BPI → PlaySound2D → Return True
 
                 → False →
-                    Does Container Match Tag Query
-                      Tag Container: Get Item Tags (BP_DraggedItem.ItemData)
-                      Tag Query: Any Tags Match →
-                        EasyRPG.Items.Equipment.HeadRuneWord
-                        EasyRPG.Items.Equipment.BodyRuneWord
-                        EasyRPG.Items.Equipment.PantsRuneWord
-                        EasyRPG.Items.Equipment.HandsRuneWord
-                        EasyRPG.Items.Equipment.FeetRuneWord
-                        EasyRPG.Items.Equipment.BackpackRuneWord
-                        EasyRPG.Items.Equipment.ToolRuneWord
-                    → Branch (es runa)
+                    ✅ NUEVO — Cast To BP_EquipmentComponent (Object: GET Container)
+                      Cast Failed →
+                        TryMoveItemToContainerSlot_BPI →
+                        Set bUseItem = (RandomInteger(100) <= bUseItemChance) →
+                        DelayAssignment → PlaySound2D → Return True
+
+                      Cast Success →
+                        Does Container Match Tag Query
+                          Tag Container: Get Item Tags (BP_DraggedItem.ItemData)
+                          Tag Query: Any Tags Match →
+                            EasyRPG.Items.Equipment.HeadRuneWord
+                            EasyRPG.Items.Equipment.BodyRuneWord
+                            EasyRPG.Items.Equipment.PantsRuneWord
+                            EasyRPG.Items.Equipment.HandsRuneWord
+                            EasyRPG.Items.Equipment.FeetRuneWord
+                            EasyRPG.Items.Equipment.BackpackRuneWord
+                            EasyRPG.Items.Equipment.ToolRuneWord
+                        → ✅ NUEVO — AND con IsValidRuneDestination:
+                              Equal (Integer): GET SlotNumber == 7          → IsBaseRuneSlot
+                              >= (Integer): GET SlotNumber >= 14            → B2
+                              <= (Integer): GET SlotNumber <= 22            → B3
+                              AND (B2, B3)                                  → InDuplicateRuneRange
+                              OR (IsBaseRuneSlot, InDuplicateRuneRange)     → IsValidRuneDestination
+                        → AND (Does Container Match Tag Query, IsValidRuneDestination)
+                    → Branch (es runa Y slot destino válido)
                         → False → TryMoveItemToContainerSlot_BPI →
                                   Set bUseItem = (RandomInteger(100) <= bUseItemChance) →
                                   DelayAssignment → PlaySound2D → Return True
@@ -284,6 +318,11 @@ Entry (Operation, PointerEvent) →
 > **Nota:** `Print String "No es runa"` existe como debug temporal en el pin False
 > del Branch de detección de runas. Pendiente eliminar.
 
+> **Nota sobre escalabilidad del fix:** cuando se repliquen los slots de runa múltiple para
+> Body/Pants/Hands/Feet/Backpack/Tool (ver `16_SYSTEM_RuneBinding_WeaponCosmetic.md`, Fase 1),
+> el bloque `IsValidRuneDestination` necesitará un `OR` adicional por cada familia — mismo
+> patrón usado en `CheckContainerSlotForItem` (`06_BLUEPRINT_BP_EquipmentComponent.md`).
+
 ---
 
 ## Notas de arquitectura
@@ -297,6 +336,13 @@ Entry (Operation, PointerEvent) →
 - `bUseItem` actúa como gate interno del slot para controlar si se muestra el ícono real.
 - `bIsLocked` es el gate del sistema de runas — independiente de `IsBlocked`.
   `IsBlocked` es para operaciones de repair/use. `bIsLocked` es para el candado de runas.
+- **✅ Nuevo (Fix candados fantasma):** el check "es runa" en `OnDrop` ahora valida dos capas
+  independientes antes de entrar al flujo ÉXITO/FALLO: (1) `Cast To BP_EquipmentComponent`
+  sobre `Container` — descarta cualquier `UI_ItemSlot` que no pertenezca al
+  `EquipmentContainer` (inventario, hotbar, mochila, etc.), y (2) `IsValidRuneDestination` —
+  descarta slots del `EquipmentContainer` que no son de runa (Head, Body, Pants, Hands, Feet,
+  Backpack, Tool, y los slots base de rune word de otras familias aún no implementados). Ambas
+  capas son necesarias — ninguna reemplaza a la otra. Ver sección OnDrop arriba.
 
 ---
 
@@ -310,9 +356,15 @@ Entry (Operation, PointerEvent) →
 | AssignDuration hardcodeado a 5.0 en OnDrop | — | Pendiente — hacer configurable |
 | Print String "No es runa" debug temporal | — | Pendiente — eliminar |
 | Pin RuneIcon sin uso en AddRuneToQueue | — | Pendiente — limpiar |
+| **Candados fantasma al soltar runa en slot no-runa** | — | ✅ **RESUELTO esta sesión** — ver sección OnDrop arriba. Fix: `Cast To BP_EquipmentComponent` + `IsValidRuneDestination` combinados con `AND` antes del flujo ÉXITO/FALLO. |
+| **Hardening opcional pendiente — `IsValid(LockedSlot)` en `AddRuneToQueue`** | Ver `13_WIDGET_UI_CraftingQueue.md` | ⏳ Pendiente — capa de seguridad adicional, no bloqueante. El fix de OnDrop ya corta el problema de raíz; esto es defensa extra contra futuros puntos de entrada a `AddRuneToQueue` que pudieran pasar un `LockedSlot` inválido. |
+| **Contradicción a verificar — `Set IsBlocked` vs `Set bIsLocked` en `AddRuneToQueue`** | Ver `13_WIDGET_UI_CraftingQueue.md` | ⏳ Pendiente verificación en editor — el log de runtime nombra el nodo `Set IsBlocked`, pero la documentación de `AddRuneToQueue` describe `SET bIsLocked = True`. El log (comportamiento real compilado) tiene prioridad sobre el .md hasta confirmar en el grafo real cuál variable se está seteando. |
 
 ---
 
-*Archivo actualizado — sesión Light Paradox (Lógica 1 rediseño + Lógica 4 probabilidad)*
-*Cambios: Variables SuccessChance y bIsLocked agregadas, LockIcon en Hierarchy, OnDrop actualizado con sistema de probabilidad y bifurcación éxito/fallo*
+*Archivo actualizado — sesión Light Paradox (Fix candados fantasma en Action/Crafting Queue)*
+*Cambios: documentado el fix de OnDrop con Cast To BP_EquipmentComponent + IsValidRuneDestination
+combinados con AND antes del flujo ÉXITO/FALLO; nota crítica agregada sobre SlotNumber como índice
+local al Container (no global); registrados dos pendientes: Hardening opcional (IsValid check en
+AddRuneToQueue) y verificación de contradicción Set IsBlocked/bIsLocked — ver 13_WIDGET_UI_CraftingQueue.md*
 *Project: Light Paradox · Base: EasySurvivalRPGv5*
