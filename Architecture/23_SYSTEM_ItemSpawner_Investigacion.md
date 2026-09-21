@@ -1,9 +1,9 @@
-# 23 — Sistema: Item Spawner / Spawn Nocturno — Investigación inicial
-### Sistema: Spawn condicional de ítems (objetivo: vincular al ciclo día/noche)
+# 23 — Sistema: Item Spawner / Spawn Nocturno — Investigación + Prototipo v1
+### Sistema: Aparición condicional de ítems vinculada al ciclo día/noche
 ### Base Asset: EasySurvivalRPGv5
-### Fuente: Inspección directa del panel Details + Export .txt de EventGraph — sesión Light Paradox
+### Fuente: Inspección directa del panel Details + Export .txt de EventGraph + implementación en sesión — Light Paradox
 ### Proyecto: Light Paradox · UE 5.4.4
-### Estado: 🔴 Investigación en curso — sin implementación todavía
+### Estado: ✅ Prototipo v1 (Ruta B) implementado y confirmado en juego · 🔴 Investigación de Ruta A (spawn dinámico real) sigue pendiente
 
 ---
 
@@ -239,6 +239,120 @@ relevante no visto todavía en el EventGraph.
 
 ---
 
+## Prototipo v1 (Ruta B) — ✅ CONFIRMADO FUNCIONAL EN JUEGO
+
+### Decisión de scope
+
+Se decidió prototipar **Ruta B** primero (sistema nuevo, pequeño, dedicado
+a ítems) antes de seguir investigando si **Ruta A** (reutilizar
+`BP_SpawnPoint` apuntando `Character Class` a una clase basada en
+`BP_Item`) es viable a largo plazo. Ruta A queda pendiente — ver sección
+"Acciones pendientes" más abajo, sin cambios respecto a la sesión anterior.
+
+Para esta v1 **no se implementó spawn dinámico real** (aparición aleatoria
+dentro de un radio). En su lugar: el ítem ya está colocado de forma fija
+en el nivel (siguiendo el flujo de colocación manual ya usado por el
+usuario — arrastrar `BP_Item`/hija, configurar `Row Name`), y se controla
+su **visibilidad + colisión** en runtime según el mismo booleano de noche
+ya calculado en `CheckLight`. Visualmente el resultado es indistinguible
+de un spawn nocturno. Cuando se investigue Ruta A o un spawn dinámico real
+con radio/probabilidad, el gate de noche construido acá se reutiliza sin
+cambios — solo cambia qué sistema lo consume.
+
+### Clase nueva — `BP_Item_NightOnly`
+
+**Tipo:** Child Blueprint Class de `BP_Item` (respeta Rule 4.1 — no se
+modificó el asset base).
+
+**Custom Event: `SetNightVisible`**
+
+**Input:** `bVisible` (Boolean)
+
+```
+SetNightVisible (bVisible)
+  → Set Actor Hidden In Game (Target: self, New Hidden In Game: NOT bVisible)
+    → Set Actor Enable Collision (Target: self, New Collision Enabled: bVisible)
+```
+
+**Event BeginPlay (propio de la clase hija, adicional al de `BP_Item`):**
+
+```
+Event BeginPlay → SetNightVisible (bVisible: False)
+```
+
+Arranca oculto/sin colisión hasta que `CheckLight` evalúe por primera vez
+si es de noche o de día.
+
+### Instancia en el nivel
+
+Colocada siguiendo el flujo estándar ya usado por el proyecto: arrastrar
+`BP_Item_NightOnly` a la escena → panel Details → `Item Handle` → `Row
+Name` → `Component_Corn`. El resto de propiedades (Static Mesh, Material,
+Amount, Durability, etc.) se auto-configuran igual que con `BP_Item`
+normal — mecanismo de auto-configuración por `Row Name` aún no
+inspeccionado a fondo (ver Deuda Técnica).
+
+### Hook en `BP_DayNight`
+
+**Variable nueva:** `Night Only Items` — Array de `BP_Item_NightOnly`,
+Instance Editable. Permite escalar el sistema simplemente agregando más
+instancias al array, sin tocar el grafo de nuevo.
+
+**Modificación en `CheckLight`:** se agregó un tercer pin al `Sequence`
+existente (`Then 2`), reutilizando el mismo `NOT(In Range(Time, Sunrise
+Time, Sunset Time))` que ya alimenta la rama de luces y la de
+`State_Poison` — sin duplicar lógica de día/noche en un tercer lugar del
+proyecto, consistente con el patrón ya establecido en
+`22_SYSTEM_LunarPhases_EclipseStates.md`.
+
+```
+CheckLight
+  → Sequence
+      Then 0 → [luces, sin cambios]
+      Then 1 → [Poison, sin cambios]
+      Then 2 → For Each Loop (Array: Night Only Items)
+                 Loop Body → Array Element → Set Night Visible
+                               (bVisible ← mismo NOT compartido con luces/Poison)
+```
+
+### Bug encontrado y resuelto — ítem atraviesa el suelo
+
+**Síntoma:** al activarse de noche, el Corn caía y atravesaba el suelo en
+vez de quedarse apoyado en su posición.
+
+**Causa:** `BP_Item` (y por herencia `BP_Item_NightOnly`) tiene `Simulate
+Physics` activo por defecto en su componente `StaticMesh`. Mientras el
+ítem estaba oculto con colisión desactivada (`Set Actor Enable Collision:
+False`), la física seguía simulando sin nada sólido con qué colisionar —
+al reactivar la colisión, el objeto ya había caído fuera de su posición
+original o seguía cayendo sin detenerse en el suelo.
+
+**Fix aplicado (confirmado funcional):** desactivar `Simulate Physics` en
+el componente `StaticMesh` de la instancia `BP_Item_NightOnly` colocada en
+el nivel (panel Details → Static Mesh → Physics → `Simulate Physics` →
+desmarcar).
+
+**Confirmado en juego:** con `Simulate Physics = False`, el Corn aparece y
+desaparece correctamente en su posición fija, sin atravesar el suelo.
+
+**Nota de escalabilidad:** este fix es **por instancia**, no por clase —
+cada nueva instancia de `BP_Item_NightOnly` que se coloque en el nivel
+deberá tener `Simulate Physics` desactivado manualmente en su Static Mesh,
+salvo que se decida más adelante desactivarlo por defecto en la clase hija
+(no hecho en esta v1, para no alterar el comportamiento heredado de
+`BP_Item` más de lo estrictamente necesario para el prototipo).
+
+### Checklist de replicación para nuevos ítems nocturnos
+
+1. Colocar `BP_Item_NightOnly` en el nivel (no `BP_Item` base).
+2. Configurar `Item Handle` → `Row Name` con el ítem deseado (cualquier
+   fila de `DT_Items`).
+3. Desactivar `Simulate Physics` en su componente Static Mesh.
+4. Agregar la instancia al array `Night Only Items` en `BP_DayNight`.
+5. Play — validar aparición/desaparición con el ciclo.
+
+---
+
 ## Acciones pendientes — próxima sesión
 
 | # | Acción | Objetivo |
@@ -261,9 +375,12 @@ relevante no visto todavía en el EventGraph.
 | Tipo exacto del pin `Character Class` / `Random Classes` sin confirmar | Determina si `BP_SpawnPoint` puede apuntar a una clase basada en `BP_Item` | 🔴 Pendiente |
 | `Overridden Loot List` en `BP_SpawnPoint` sin expandir/inspeccionar | Podría ser un mecanismo de loot ya existente relevante para ítems, separado de `Character Class` | 🟡 Pendiente, prioridad media |
 | `Settings Handle` (Data Table Row Handle) en `BP_SpawnPoint` sin configurar en la instancia inspeccionada | Posible ruta data-driven alternativa a configurar `Character Class` manualmente por instancia — no explorada | 🟡 Pendiente, prioridad media |
+| `Simulate Physics` desactivado manualmente por instancia en `BP_Item_NightOnly` | Fix del bug "ítem atraviesa el suelo" al ocultar/mostrar vía colisión. Es un ajuste por instancia, no por clase — cada nueva instancia nocturna lo necesita manualmente. Evaluar en sesión futura si conviene desactivarlo por defecto en la clase hija una vez que el sistema escale a más ítems. | 🟡 Resuelto para v1 — replicación manual pendiente de automatizar |
+| Mecanismo de auto-configuración de `BP_Item` por `Row Name` (Static Mesh, Amount, Durability, etc.) | Usado activamente por el flujo de colocación del usuario pero nunca inspeccionado — probablemente vive en `ConstructionScript` o `ConstructionInit` (ver `06_BLUEPRINT_BP_ContainerComponent.md`/panel My Blueprint de `BP_Item`, Imagen 6 de sesión anterior) | ⏳ Pendiente, prioridad baja — no bloqueante para v1 |
 
 ---
 
-*Archivo creado — sesión Light Paradox (investigación inicial de spawn nocturno de ítems).*
-*Continúa el trabajo de `22_SYSTEM_LunarPhases_EclipseStates.md`. Sin implementación todavía — pendiente de exports adicionales antes de tomar decisión de arquitectura (Ruta A vs Ruta B).*
+*Archivo actualizado — sesión Light Paradox (Prototipo v1, Ruta B, implementado y confirmado en juego).*
+*Cambios: agregada clase `BP_Item_NightOnly` (child de `BP_Item`) con `SetNightVisible`; hook nuevo en `CheckLight` (`BP_DayNight`) reutilizando el booleano de noche compartido con luces y `State_Poison`; variable `Night Only Items` (array, Instance Editable) para escalar agregando instancias; bug de física (`Simulate Physics` atravesando el suelo) documentado y resuelto por instancia; checklist de replicación agregada. Investigación de Ruta A (`BP_SpawnPoint`) permanece pendiente sin cambios — ver sección "Acciones pendientes".*
+*Continúa el trabajo de `22_SYSTEM_LunarPhases_EclipseStates.md`.*
 *Project: Light Paradox · Base: EasySurvivalRPGv5 · UE 5.4.4*
