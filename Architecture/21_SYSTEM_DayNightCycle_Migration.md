@@ -1,8 +1,8 @@
 # 21 — Sistema: Day/Night Cycle · Migración UE 5.5.4 → 5.4.4
-### Base Asset: [pendiente nombre del asset original — ver discrepancia de nombre abajo]
+### Base Asset: sistema Day/Night migrado de proyecto externo (UE 5.5.4)
 ### Proyecto: Light Paradox · UE 5.4.4
-### Fuente: Migración manual + inspección directa del asset original — sesión Light Paradox
-### Fuente adicional (esta sesión): `Day_Night_Module.pdf` — documento original del programador (fuente vendor, no ESRPGv5 oficial)
+### Fuente: Migración manual + inspección directa + capturas de Details/Outliner + `Day_Night_Module.pdf` (vendor)
+### Actualizado: sesión Light Paradox — Calibración día/noche (Sunrise/Sunset, Sun Yaw, Start Time, SkyLight día/noche)
 
 ---
 
@@ -11,157 +11,103 @@
 Sistema de ciclo Día/Noche migrado manualmente desde un proyecto en UE 5.5.4
 (el desarrollador original usó la versión incorrecta de motor). Se replicó
 Blueprint por Blueprint, asset por asset, en Light Paradox (UE 5.4.4).
-Servirá como base para disparar eventos de ciclos lunares y tipos de eclipse.
+Servirá como base para disparar eventos de ciclos lunares y tipos de eclipse
+(ver `22_SYSTEM_LunarPhases_EclipseStates.md`).
 
-**Estado general al cierre de la sesión anterior:** el ciclo día/noche ya es
-**funcional** — corre lógicamente y produce movimiento visual del sol y la
-luna. Quedan pendientes: un misterio sin resolver sobre el mecanismo real
-del original (ver Bug 5), problemas visuales conocidos a corregir, una
-tarea de optimización de rendimiento reportada por el cliente, validación
-del sistema replicado contra el documento original del programador (nuevo
-esta sesión), y el diseño de fases lunares/eclipse vinculadas a Estados
-(ver `22_SYSTEM_LunarPhases_EclipseStates.md`, nuevo archivo).
-
----
-
-## ⚠️ Discrepancia de nombre detectada esta sesión — BP_DayNight vs BP_DayNightCycle
-
-El documento original del programador (`Day_Night_Module.pdf`) nombra al
-actor principal como **`BP_DayNightCycle`**. Toda la documentación de este
-proyecto basada en inspección directa de la migración (este archivo)
-usa **`BP_DayNight`**.
-
-**No confirmado cuál es el nombre real actual en el proyecto Light Paradox.**
-
-- **Prioridad para nombrar el asset TAL COMO EXISTE en Light Paradox:** la
-  inspección directa del proyecto migrado tiene prioridad sobre el PDF,
-  porque el PDF describe el proyecto original en 5.5.4, no la migración —
-  pudo haber existido un rename intencional o no intencional durante el
-  proceso manual de migración documentado en este archivo.
-- **Acción pendiente (próxima sesión):** abrir el Content Browser y
-  confirmar el nombre exacto de la clase Blueprint actual. Si el nombre
-  real es `BP_DayNightCycle`, corregir este archivo y todas las
-  referencias cruzadas (`16_SYSTEM_RuneBinding_WeaponCosmetic.md` y
-  `22_SYSTEM_LunarPhases_EclipseStates.md` no lo referencian aún, pero
-  futuras sesiones sí lo harán).
-- Hasta confirmar, este archivo sigue usando `BP_DayNight` por
-  consistencia con las secciones ya escritas, marcado explícitamente como
-  **pendiente de verificación**, no como hecho confirmado.
+**Estado general (esta sesión): ciclo día/noche funcional y calibrado.**
+- Lógica (`Sunrise Time = 6`, `Sunset Time = 18`) y visual (sol/luna) ahora
+  coinciden. Confirmado por el usuario en juego con la tabla de verificación
+  por `Start Time`.
+- El juego arranca de día (`Start Time`).
+- La iluminación del `SkyLight` cambia de día a noche (intensidad y color).
+- Pendientes principales: interpolar iluminación con `Time` (salto instantáneo
+  actual), mover el incremento de `Day` fuera del tick por frame (necesario
+  para el DataTable de ciclos lunares), verificar efecto de `Moon.Temperature`,
+  optimización, y problemas visuales heredados menores.
 
 ---
 
-## Comparación contra el documento original del programador (PDF) — nuevo esta sesión
+## ✅ Nombre del actor — discrepancia RESUELTA
 
-El PDF `Day_Night_Module.pdf` es la única documentación vendor disponible
-para este sistema. Se usa como referencia de validación, no como fuente
-más autoritativa que la inspección directa del proyecto migrado (ver regla
-de prioridad de fuentes al inicio de este proyecto). Resumen de lo que
-confirma/amplía:
+El PDF original nombra al actor `BP_DayNightCycle`. La captura del Outliner
+de esta sesión muestra el actor `BP_DayNight` con link `Edit BP_DayNight`.
+**Nombre real en Light Paradox confirmado: `BP_DayNight`.** (Inspección
+directa tiene prioridad sobre el PDF.)
+
+---
+
+## Comparación contra el documento original del programador (PDF)
+
+El PDF `Day_Night_Module.pdf` es la única documentación vendor disponible.
+Se usa como referencia de validación, no como fuente más autoritativa que la
+inspección directa del proyecto migrado.
 
 ### Variables de configuración (confirmado por PDF)
 | Variable (PDF) | Descripción (PDF) | Coincide con este .md |
 |---|---|---|
-| `Time` | Hora del día | ✅ Coincide — variable `Time` ya documentada arriba |
-| `Total Day Night Time` | Índice de velocidad del tiempo | ✅ Coincide — ya documentada, valor `1` confirmado en ambos proyectos |
+| `Time` | Hora del día | ✅ |
+| `Total Day Night Time` | Índice de velocidad del tiempo | ✅ Valor `1` confirmado (captura Details esta sesión: `1.0`) |
 
 ### UI Widget (confirmado por PDF)
-El PDF confirma que la lógica de creación del widget de día/hora vive en el
-**Level Blueprint**, no en `BP_DayNight`/`BP_DayNightCycle`:
+La creación del widget de día/hora vive en el **Level Blueprint**:
 ```
 Event BeginPlay → Create WBP Time Widget (Class: WBP_Time, Owning Player: ...) → Add to Viewport
 ```
-Esto es información nueva no capturada antes en la sección "WBP_Time" de
-este archivo (antes solo se había confirmado que `WBP_Time` lee variables
-vía `Get All Actors Of Class`, sin documentar quién lo instancia). **Acción
-pendiente:** confirmar si el Level Blueprint de Light Paradox tiene esta
-misma lógica de creación, o si `WBP_Time` nunca llegó a instanciarse en la
-migración (dato relevante ya que este .md marcaba a `WBP_Time` como "sin
-replicar" — puede que la falta de este nodo en el Level Blueprint sea
-justamente la razón).
+**Pendiente:** confirmar si el Level Blueprint de Light Paradox tiene esta
+lógica (posible razón de que `WBP_Time` figure "sin replicar").
 
 ### MI_SkySpherePhases — lista completa de parámetros (confirmado por PDF)
-El PDF confirma la lista **completa** de parámetros del Material Instance,
-ampliando lo que este archivo tenía documentado (antes solo se listaban 4
-parámetros con los valores reaplicados tras el fix de Bug 2). Ubicación
-confirmada: `/Game/EasySurvivalRPG/Materials/Instances`.
+Ubicación: `/Game/EasySurvivalRPG/Materials/Instances`.
 
 | Grupo | Parámetro | Valor de ejemplo (PDF) | Notas |
 |---|---|---|---|
 | Global | `Eclipse Phase` | 0.5 | Máscara para simular un eclipse |
-| Global | `SunBrightness` | 1.0 | Brillo del sol |
+| Global | `SunBrightness` | 1.0 | |
 | Global | `SunScale` | 0.1 | Tamaño del disco solar |
 | Moon | `MoonBrightness` | 1.0 | |
 | Moon | `MoonColor` | (color) | |
-| Moon | `MoonGlowRotation` | 0.0 | ⚠️ Ver nota Problema Visual 2 abajo |
+| Moon | `MoonGlowRotation` | 0.0 | Único parámetro de rotación del material |
 | Moon | `MoonGlowSharpness` | 1.5 | |
 | Moon | `MoonGlowSize` | 0.15 | |
-| Moon | `MoonPhase` | 0.744966 | Controla la fase visual de la luna — ver `22_SYSTEM_LunarPhases_EclipseStates.md` |
+| Moon | `MoonPhase` | 0.744966 | Fase visual de la luna |
 | Moon | `MoonScale` | 0.1 | |
 | Stars | `StarsBlendMinDarkness` | 35.0 | |
 | Stars | `StarsBlendTransition` | 0.1 | |
 | Stars | `StarsBrightness` | 4.0 | |
-| Stars | `StarTexture` | `T_Stars` | Confirma que `T_Stars` es la textura activa (resuelve la duda de "posible duplicado" con `gradient_sphere`/`GradientSphere` — esos dos no aparecen en este material) |
+| Stars | `StarTexture` | `T_Stars` | Textura activa de estrellas |
 
-> **Nota importante — posible pista para Problema Visual 2 (estrellas
-> rotando):** el grupo `Stars` **no tiene ningún parámetro de rotación
-> propio** en esta lista. El único parámetro de rotación visible en todo
-> `MI_SkySpherePhases` es `MoonGlowRotation`, que pertenece al grupo
-> **Moon**, no Stars. Esto es evidencia (no confirmación) de que la
-> rotación visible de las estrellas **no viene de un parámetro de Material
-> Instance dedicado**, sino que probablemente es un efecto secundario del
-> `SetWorldRotation` que ya aplica el Timeline sobre el `DirectionalLight`/
-> `Moon` (ver jerarquía de componentes — `SM_SkySphere` está attachado como
-> hijo de `Moon`, y si el material de estrellas usa las UVs del mesh en
-> vez de World Space, rotar el mesh rota visualmente las estrellas junto
-> con él). **No confirmado — pendiente inspección del grafo de
-> `M_SkySphere` para confirmar si `T_Stars` usa Texture Coordinate ligado
-> al mesh o a un Panner independiente.**
+> **Pista para Problema Visual 2 (estrellas rotando):** el grupo `Stars` no
+> tiene parámetro de rotación. Evidencia (no confirmación) de que la rotación
+> viene del transform del mesh `SM_SkySphere` (hijo de `Moon`), no del
+> material. Pendiente inspeccionar el grafo de `M_SkySphere`.
 
-### Ejemplos de valores — Eclipse (confirmado por PDF, `DayNighCycleMap`)
+### Ejemplos de valores — Eclipse (PDF, `DayNighCycleMap`)
 | Test | EclipsePhase | SunBrightness | SunScale |
 |---|---|---|---|
 | 1 | 0.5 | 1.0 | 0.5 |
 | 2 | 0.25 | 1.0 | 0.2 |
 | 3 | 0.01 | 1.0 | 0.2 |
 
-> Nota: `SunScale` varía entre los tres ejemplos (0.5 → 0.2 → 0.2), lo cual
-> sugiere que estos valores fueron ajustados manualmente por captura, no
-> que representen 3 "fases" discretas predefinidas del sistema. Ver
-> discusión completa en `22_SYSTEM_LunarPhases_EclipseStates.md`.
-
-### Ejemplos de valores — Fases lunares (confirmado por PDF, `DayNighCycleMap`)
+### Ejemplos de valores — Fases lunares (PDF, `DayNighCycleMap`)
 | Test | MoonPhase | Descripción visual (PDF) |
 |---|---|---|
 | 1 | 0.5 | Luna llena / muy iluminada |
-| 2 | 0.72 | Luna creciente/menguante (forma delgada) |
-| 3 | 0.088 | Luna gibosa (forma ancha, no llena) |
+| 2 | 0.72 | Creciente/menguante (delgada) |
+| 3 | 0.088 | Gibosa (ancha, no llena) |
 
-> Ver discusión completa sobre si esto implica 3 fases discretas o un
-> rango continuo en `22_SYSTEM_LunarPhases_EclipseStates.md`.
+> Ver discusión sobre fases discretas vs rango continuo en
+> `22_SYSTEM_LunarPhases_EclipseStates.md`.
 
-### Nota de diseño confirmada por el PDF (cita paraprasada, no textual)
-El documento original indica que los eventos deben correlacionarse con el
-ciclo, y que los efectos lunares afectan tanto al jugador como a los
-enemigos, de forma independiente de la personalización del personaje. Esta
-es la base de diseño para el nuevo sistema documentado en
-`22_SYSTEM_LunarPhases_EclipseStates.md`.
+### Nota de diseño del PDF (paráfrasis)
+Los eventos deben correlacionarse con el ciclo, y los efectos lunares afectan
+a jugador y enemigos por igual, independientemente del personaje.
 
-### Mapa de pruebas confirmado
-`DayNighCycleMap`, ubicado en `/Game/EasySurvivalRPG/Maps` — mapa de
-pruebas del asset original, útil como referencia visual para validar que
-la migración a Light Paradox reproduce el mismo comportamiento en cada
-parámetro.
+### Mapa de pruebas
+`DayNighCycleMap`, en `/Game/EasySurvivalRPG/Maps`.
 
-### ⏳ Pendiente — validación sistemática restante
-Este PDF cubre variables de configuración y parámetros de material. **No
-cubre** el EventGraph, el Timeline, ni la jerarquía de componentes — esas
-partes de este .md siguen basadas únicamente en inspección directa de la
-migración (Bug 1 a Bug 5). **Acción pendiente:** validar, uno por uno a
-medida que avancen las sesiones, si el comportamiento reproducido coincide
-con lo que el PDF documenta, especialmente los rangos de `EclipsePhase` y
-`MoonPhase` de la tabla de ejemplos arriba, replicándolos en
-`DayNighCycleMap` (o el mapa equivalente en Light Paradox) y comparando
-visualmente contra las capturas del PDF.
+### ⏳ Validación restante
+El PDF no cubre EventGraph, Timeline ni jerarquía de componentes. Pendiente
+validar `EclipsePhase` y `MoonPhase` contra las capturas del PDF.
 
 ---
 
@@ -169,56 +115,80 @@ visualmente contra las capturas del PDF.
 
 | Asset | Tipo | Notas |
 |---|---|---|
-| `BP_DayNight` | Blueprint Class | Blueprint principal del ciclo. ⚠️ Ver discrepancia de nombre vs PDF (`BP_DayNightCycle`) arriba. |
-| `BPI_IsLight` | Blueprint Interface | Función `TurnOn/OffLight(TurnLightOn?: Boolean)`. Confirmado sin diferencias vs. original. |
-| `MPC_IsLight` | Material Parameter Collection | Parámetro escalar `LightLevel`, Default Value `1.0`. Confirmado sin diferencias vs. original. |
-| `WBP_Time` | Widget Blueprint | Widget de solo lectura — contador de Day/Time. **No controla nada de BP_DayNight**, solo lee sus variables vía `Get All Actors Of Class`. El PDF confirma que su instanciación (Create Widget + Add to Viewport) vive en el Level Blueprint — ver sección de comparación arriba. Pendiente confirmar si esa lógica existe en el Level Blueprint de Light Paradox. |
+| `BP_DayNight` | Blueprint Class | Blueprint principal del ciclo. Nombre confirmado. |
+| `BPI_IsLight` | Blueprint Interface | `TurnOn/OffLight(TurnLightOn?: Boolean)`. |
+| `MPC_IsLight` | Material Parameter Collection | Escalar `LightLevel`, default `1.0`. |
+| `WBP_Time` | Widget Blueprint | Solo lectura (Day/Time vía `Get All Actors Of Class`). Instanciación en Level Blueprint según PDF — pendiente confirmar. |
 
 ## Assets confirmados (Content/LightParadox/Meshes)
 
 | Asset | Tipo | Notas |
 |---|---|---|
-| `M_Procedural_Sky_MASTER02` | Material | Pendiente verificar uso real en escena — posible candidato para el material de estrellas, ver Problema Visual 2 |
-| `M_SkySphere` | Material | Reparado (nodo `MF_SunEclipse` recreado, ver Bug 2). Conteo de instrucciones: **455** vs **483** del original — diferencia de 28, pendiente investigar si es relevante. |
-| `MI_SkySpherePhases` | Material Instance | Lista completa de parámetros confirmada por PDF esta sesión — ver tabla arriba. Directamente responsable del visual de eclipse confirmado funcionando esta sesión — ver Comportamiento Visual Confirmado. |
-| `SM_SkySphere` | Static Mesh | Transform confirmado idéntico al original. Collision Preset cambiado a `NoCollision` — cambio intencional del usuario. Attachado como hijo de `Moon`, no de `DirectionalLight`. |
+| `M_Procedural_Sky_MASTER02` | Material | Pendiente verificar uso real en escena |
+| `M_SkySphere` | Material | Reparado (`MF_SunEclipse` recreado). **455** instrucciones vs **483** del original — pendiente. |
+| `MI_SkySpherePhases` | Material Instance | Parámetros en tabla PDF arriba. Responsable del visual de eclipse. |
+| `SM_SkySphere` | Static Mesh | Transform idéntico al original. Collision `NoCollision` (intencional). Hijo de `Moon`. |
 | `dark_moon` | Texture | |
-| `gradient_sphere` / `GradientSphere` | Texture | Ninguna de las dos aparece en la lista de parámetros de `MI_SkySpherePhases` confirmada por el PDF — la textura de estrellas activa es `T_Stars` (parámetro `StarTexture`). Sigue pendiente confirmar en qué material/uso está cada una de estas dos texturas duplicadas. |
+| `gradient_sphere` / `GradientSphere` | Texture | No aparecen en `MI_SkySpherePhases`. Pendiente confirmar uso. |
 | `Sun` | Texture | |
-| `T_Stars` | Texture | Confirmado por PDF como el parámetro `StarTexture` de `MI_SkySpherePhases` — textura activa del material de estrellas. |
+| `T_Stars` | Texture | `StarTexture` activa. |
 
-## Material Functions confirmadas
+## Material Functions
 
-| Asset | Tipo | Notas |
-|---|---|---|
-| `MF_SunEclipse` | Material Function | No existía en el proyecto migrado — causaba el Bug 2. Recreada manualmente (Migrate nativo falló por incompatibilidad 5.5.4→5.4.4). Reconectada en `M_SkySphere`, pin `Sun Eclipse Phase In (S)`. **Confirmado funcional esta sesión** — el visual de eclipse descrito por el usuario ya se reproduce correctamente. |
+| Asset | Notas |
+|---|---|
+| `MF_SunEclipse` | Recreada manualmente (Migrate falló 5.5.4→5.4.4). Reconectada en `M_SkySphere`. Confirmada funcional. |
 
 ---
 
 ## Jerarquía de componentes confirmada en BP_DayNight
 
+Confirmada otra vez por captura del panel Components esta sesión.
+
 ```
 BP_DayNight (Self)
   DefaultSceneRoot
-    ├── Billboard                    ← Hidden In Game intencional, igual al original
+    ├── Billboard                    ← Hidden In Game intencional
     ├── VolumetricCloud
     ├── ExponentialHeightFog
     ├── SkyAtmosphere
     └── DirectionalLight            ← "Sol"
-          ├── SkyLight
-          └── Moon                  ← componente de luz direccional para la luna
-                └── SM_SkySphere    ← mesh de la esfera de cielo, attachado a Moon, no al Sol
+          ├── SkyLight              ← hijo del DirectionalLight (hereda su rotación)
+          └── Moon                  ← luz direccional de la luna
+                └── SM_SkySphere
 ```
 
-**Aclarado sesión anterior (relevante para Bug 5):** el usuario confirma que
-sol, luna y estrellas se perciben moviéndose a **timings distintos entre
-sí** en el original — el usuario atribuye esto a la diferencia de distancia
-entre los assets, lo cual es consistente con esta jerarquía (el Sol rota
-como `DirectionalLight` directamente, mientras que `SM_SkySphere` —que
-probablemente contiene tanto la luna como las estrellas en su material—
-depende del transform de `Moon`, un componente distinto). Esto refuerza que
-puede haber **más de un mecanismo de rotación operando en paralelo**, no
-solo el `Sun Yaw` del Timeline. Ver Bug 5.
+Sol, luna y estrellas se perciben con timings distintos entre sí en el
+original. Consistente con que `SM_SkySphere` dependa del transform de `Moon`.
+
+---
+
+## Valores de iluminación confirmados (capturas Details, esta sesión)
+
+### `Moon` (componente de luz direccional)
+| Propiedad | Valor en captura | Notas |
+|---|---|---|
+| Rotation | (0, 0, 180) | Override de instancia (flecha de reset) |
+| Mobility | Movable | |
+| Intensity | `0.26 lux` | Override de instancia |
+| Light Color | blanco | |
+| Use Temperature | ✅ activo | |
+| Temperature | `9000.0` en la captura | El usuario aplicó ajustes tras la captura (se sugirió `12000` o Light Color azul). **Valor final no re-capturado — pendiente documentar.** |
+
+### `SkyLight`
+| Propiedad | Valor en captura | Notas |
+|---|---|---|
+| Location | (-48.296291, 0, -87.059048) | |
+| Rotation | (0, 75, 0) | |
+| Mobility | Movable | |
+| Real Time Capture | ✅ activo | Necesario para que el ambiente se actualice con el ciclo |
+| Source Type | SLS Captured Scene | |
+| Intensity | `0.3` | Valor base de día. De noche se sobrescribe vía `CheckLight` (ver abajo). |
+| Light Color | blanco | De noche se sobrescribe vía `CheckLight`. |
+
+### `DirectionalLight` (sol)
+`Intensity = 2.75 lux` (documentado en sesión anterior, **no revisado** esta
+sesión). Si de noche aún se ve luz solar, revisar.
 
 ---
 
@@ -226,355 +196,193 @@ solo el `Sun Yaw` del Timeline. Ver Bug 5.
 
 | Variable | Tipo | Notas |
 |---|---|---|
-| `DayNightCycle_Timeline` | Timeline (auto-generada vía My Blueprint → Timelines) | ✅ Recreado correctamente tras Bug 1. |
-| `Total Day Night Time` | Float | **Confirmado = `1` en ambos proyectos** (original y migrado, valores idénticos, y confirmado nuevamente por el PDF esta sesión). Descartado como causa de cualquier bug — ver Bug 4. |
-| `Time` | Float | Recibe salida del Float Track `Time`. Confirmado incrementando correctamente en runtime (Print String). Confirmado por PDF como "hour of day". |
-| `Day` | Integer/Float (tipo exacto no confirmado) | Incrementado en `Update Data`, disparado por `Update` del Timeline (cada frame, no por ciclo — ver nota de diseño). |
-| `Sunrise Time` / `Sunset Time` | Float | Valores simples de instancia. Sin relación a Data Table. |
+| `DayNightCycle_Timeline` | Timeline | Creado vía My Blueprint → Timelines. |
+| `Total Day Night Time` | Float | `1.0` (confirmado por captura y PDF). |
+| `Time` | Float | Salida del Float Track `Time`. En instancia: `0.0`. |
+| `Day` | Integer (inferido) | Captura muestra `1` sin decimales (vs `1.0` en Float). Confirmar en panel Variables. |
+| `Sunrise Time` | Float | **`6.0`** (Instance Editable). |
+| `Sunset Time` | Float | **`18.0`** (Instance Editable). |
+| `Start Time` | Float | **Nueva.** Instance Editable. Default `8.0`. Hora a la que arranca el Timeline. |
+| `Night Only Items` | Array de `BP_Item_NightOnly` | Instance Editable. **3 elementos** en la instancia (`BP_Item_NightOnly`, `_2`, `_3`). Ver `23_SYSTEM_ItemSpawner_Investigacion.md`. |
+| `All Lights in Level` | Array | Llenado en BeginPlay vía `Get All Actors with Interface (BPI_IsLight)`. |
+| `SkyLight Intensity Day` | Float | **Nueva.** Instance Editable. Default `0.3`. |
+| `SkyLight Intensity Night` | Float | **Nueva.** Instance Editable. Default `0.1` (rango de prueba `0.05`–`0.15`). |
+| `SkyLight Color Day` | Linear Color | **Nueva.** Instance Editable. Default blanco (`FFFFFF`). |
+| `SkyLight Color Night` | Linear Color | **Nueva.** Instance Editable. Punto de partida `7090FF` (azul frío), ajustado a ojo por el usuario — valor final no documentado. |
+
+> Los defaults indicados son los sugeridos al crear las variables. El usuario
+> pudo ajustarlos después; valores finales pendientes de re-captura.
 
 ---
 
-## Timeline — `DayNightCycle_Timeline` — Tracks confirmados
+## Timeline — `DayNightCycle_Timeline` — Tracks
 
 **Length:** `24.00` — **Tick Group:** `TG_PrePhysics` — **Looping:** activado
 
-| Track | Tipo | Keyframes confirmados |
+| Track | Tipo | Keyframes |
 |---|---|---|
-| `Time` | Float Track | 2 keyframes: (0, 0) y (24, 24). Curva lineal. |
-| `DayEnded` | Float Track | 1 keyframe: (0, 0). Sin uso — pin sin conectar en el EventGraph, confirmado en original y migrado. |
-| `Sun Yaw` | Float Track | **0 keyframes — confirmado vacío en AMBOS proyectos** (original y migrado). Ver Bug 4 y Bug 5. |
+| `Time` | Float Track | (0, 0) y (24, 24). Lineal. |
+| `DayEnded` | Float Track | 1 keyframe: (0, 0). Sin uso. **Es Float Track, no Event Track: su pin es un valor, no un pin de ejecución.** |
+| `Sun Yaw` | Float Track | ✅ **Recalibrado esta sesión:** (0, **90**) y (24, **450**), interpolación **Linear** en ambos. |
+
+### Calibración de `Sun Yaw` (esta sesión)
+La curva anterior (0→360) dejaba el cielo 6 h atrasado respecto a
+`Sunrise = 6` / `Sunset = 18` (el usuario había puesto temporalmente
+`Sunrise = 12` / `Sunset = 24` para compensar visualmente). Fórmula aplicada:
+`Pitch = 15 × Time + 90`. El valor 450 equivale a 90° para el `Make Rotator`.
+
+Tabla de verificación (confirmada por el usuario: "ya cuadra la tabla"):
+
+| Start Time | Visual | Lógica |
+|---|---|---|
+| 6 | Sol en el horizonte (amanecer) | Cambia a día |
+| 12 | Sol en el cenit | Día |
+| 18 | Sol en el horizonte, entra la luna | Cambia a noche |
+| 0 | Luna en el cenit | Noche |
+
+Para recalibrar en el futuro: cada hora de desfase = 15°, se mueven los dos
+keyframes juntos (ej. 90/450 → 105/465).
 
 ---
 
-## EventGraph — flujo confirmado
+## EventGraph — flujo confirmado (actualizado)
 
 ```
 Event BeginPlay
   → Get All Actors with Interface (BPI_IsLight) → SET All Lights in Level
   → Set Play Rate (Target: DayNightCycle_Timeline, New Rate: (60*24)/Total Day Night Time)
   → Sequence
-      Then 0 → DayNightCycle_Timeline.Play
+      Then 0 → Set New Time (Target: DayNightCycle_Timeline, New Time: GET Start Time)   ← NUEVO
+                 → DayNightCycle_Timeline.Play
       Then 1 → Set Timer by Event (Event: CheckLight, Time: Total Day Night Time, Looping: true)
 
 DayNightCycle_Timeline (pines: Time, Day Ended, Sun Yaw)
-  Update    → Update Data (Target: self)
-  Time      → SET Time → alimenta los In Range(Float) de CheckLight
+  Update    → Update Data (Target: self)          ← incrementa Day cada frame (pendiente corregir)
+  Time      → SET Time
   Sun Yaw   → Make Rotator (Y=Pitch) → Set World Rotation (Target: Directional Light)
-  Day Ended → SIN CONEXIÓN, confirmado en original y en migración.
+  Day Ended → sin conexión (Float Track, no es exec)
 
 CheckLight (Custom Event)
-  → In Range (Float) [Time, Sunrise Time, Sunset Time] → NOT → Select Float (Pick A: 1.0 / B: 0.0) → Set Scalar Parameter Value (MPC_IsLight, Parameter: LightLevel)
-  → In Range (Float) [Time, Sunrise Time, Sunset Time] → NOT → For Each Loop (All Lights in Level) → Turn on/Off Light (Target: BPI_IsLight, TurnLightOn?)
+  → Sequence
+      Then 0 → In Range (Time, Sunrise Time, Sunset Time) → NOT
+                 → Select Float (Pick A: 1.0 / B: 0.0) → Set Scalar Parameter Value (MPC_IsLight, LightLevel)
+                 → For Each Loop (All Lights in Level) → Turn on/Off Light (BPI_IsLight)
+      Then 1 → Branch (NOT) → Get Player Character → Cast To BP_Character_Base → Apply State (State_Poison)
+                 (ver 22_SYSTEM_LunarPhases_EclipseStates.md)
+      Then 2 → For Each Loop (Night Only Items) → Set Night Visible (bVisible ← NOT)
+                 (ver 23_SYSTEM_ItemSpawner_Investigacion.md)
+      Then 3 → ✅ NUEVO esta sesión — iluminación del SkyLight (abajo)
 ```
+
+> **Convención:** el booleano `NOT(In Range(Time, Sunrise Time, Sunset Time))`
+> significa **"es de noche"** y es compartido por todas las ramas. No crear un
+> segundo `In Range` para nuevas ramas.
+
+### `Then 3` — SkyLight día/noche (✅ implementado y confirmado en juego)
+
+```
+Sequence → Then 3
+  → Set Intensity (Target: SkyLight, New Intensity ← Select Float)
+        Select Float: Pick A ← "es de noche" (NOT compartido)
+                      A ← GET SkyLight Intensity Night
+                      B ← GET SkyLight Intensity Day
+  → Set Light Color (Target: SkyLight, New Light Color ← Select Linear Color, SRGB marcado)
+        Select Linear Color: Pick A ← "es de noche" (mismo NOT)
+                             A ← GET SkyLight Color Night
+                             B ← GET SkyLight Color Day
+```
+
+Motivo: `SkyLight` es un valor único que afecta día y noche. Con `0.3` fijo la
+noche se veía casi de día; con `0.1` fijo el día perdía luz y las sombras se
+endurecían (observación del usuario). Con este cambio cada valor se aplica
+solo en su momento.
 
 ### Update Data (interior confirmado)
 ```
 Entry (Update Data) → Get Day → Add (Day, 1) → SET Day
 ```
-
-**Nota de diseño (no es bug):** disparado por `Update` del Timeline —
-incrementa `Day` cada frame, no una vez por ciclo de 24h. Sin modificar
-todavía — fiel al original. Revisar al diseñar el sistema de días/lunas,
-probablemente debería usar el pin `Day Ended` (actualmente sin uso) en
-vez de `Update`.
+Disparado por `Update` del Timeline: incrementa `Day` **cada frame**, no una
+vez por ciclo. Ver pendiente "Day por frame" — necesario para el DataTable de
+ciclos lunares/eclipses.
 
 ---
 
-## Bug 1 — Timeline con ERROR tras migración 5.5.4 → 5.4.4
-**Estado:** ✅ Resuelto. Causa: `DayNightCycle_Timeline` creada manualmente
-desde el panel Variables en vez del flujo nativo My Blueprint → Timelines.
-Fix: Timeline recreado correctamente con los 3 Float Tracks vía el flujo
-nativo.
+## Bugs resueltos
 
-## Bug 2 — Material M_SkySphere incompleto tras migración
-**Estado:** ✅ Resuelto (funcionalmente — diferencia menor de instrucciones
-de shader pendiente de investigar, ver Deuda Técnica). Causa raíz:
-`MF_SunEclipse` no existía en el grafo migrado. Fix: recreado manualmente y
-reconectado.
-
-## Bug 3 — Sin cielo ni luz visible en runtime (PIE)
-**Estado:** ✅ Resuelto. Causa: `BP_DayNight` completo tenía `Hidden In
-Game` activado.
-
-## Bug 4 — Ciclo Día/Noche corría lógicamente pero sin resultado visual
-**Estado:** ✅ Resuelto (fix práctico aplicado y confirmado funcionando).
-Causa raíz: el Float Track `Sun Yaw` no tenía ningún keyframe. Fix: dos
-keyframes de prueba (Time=0 → 0°, Time=24 → 360°).
-**Pendiente:** valores de prueba (0°→360°) son provisionales — falta
-definición de diseño final de la curva.
-
-## Bug 5 — INCÓGNITA ABIERTA: el original funciona pese a Sun Yaw vacío
-**Estado:** 🟣 Sin resolver — misterio confirmado, no bloqueante. Ver
-detalle completo en la sección de hipótesis (sin cambios esta sesión). El
-PDF no aporta información nueva sobre este punto — no documenta el
-EventGraph ni el Timeline.
-
----
-
-### Bug RESUELTO — causa raíz confirmada: `Sunrise Time` / `Sunset Time` en `0.0`
-
-**Estado: ✅ RESUELTO y confirmado en juego esta sesión.**
-
-**Causa raíz confirmada:** tanto en la instancia de `BP_DayNight` en el
-nivel como en los **Class Defaults** de la clase, `Sunrise Time` y
-`Sunset Time` estaban en `0.0` ambos. Además, ninguna de las dos variables
-tenía **Instance Editable** activado, por lo que ni siquiera aparecían en
-el panel Details del nivel para poder detectarlo a simple vista — había
-que abrir el Blueprint y activar el ojo en el panel Variables para
-exponerlas.
-
-Con ambos en `0.0`, `In Range(Time, Min=0, Max=0)` (con `Inclusive Min` e
-`Inclusive Max` activados) solo devuelve `True` en el instante exacto
-`Time == 0.0` — en cualquier otro momento del ciclo devuelve `False`. Como
-la lógica usa `NOT(In Range(...))`, el resultado era `True` (es de noche)
-prácticamente todo el tiempo, sin importar cuántos ciclos transcurrieran.
-Esto afectaba **simultáneamente** al encendido/apagado de luces
-(`For Each Loop → Turn on/Off Light`) y al trigger de Poison nuevo (ver
-`22_SYSTEM_LunarPhases_EclipseStates.md`).
-
-**Fix aplicado:**
-1. Activado el ojo (Instance Editable) de `Sunrise Time` y `Sunset Time`
-   en el panel Variables de `BP_DayNight`.
-2. `Sunrise Time = 6.0`, `Sunset Time = 18.0` — aplicado tanto en Class
-   Defaults de la clase como en la instancia del nivel.
-
-**Confirmado en juego:** el Poison ya deja de aplicarse durante las horas
-de día y vuelve a activarse de noche — ver `22_SYSTEM_LunarPhases_EclipseStates.md`
-para el detalle de la prueba con `State_Poison`.
-
-**Efecto pendiente de confirmar por completo:** el Problema Visual 1 (cielo
-iluminado de noche) mejoró, pero el usuario reporta que falta terminar de
-validarlo — no se da por cerrado todavía, ver nota abajo.
-
----
-
-## ⚠️ Nuevo hallazgo esta sesión — desincronización entre lógica día/noche y curva visual `Sun Yaw`
-
-**Estado: 🔴 Pendiente de decisión de diseño — no es un bug de wiring.**
-
-Tras el fix de `Sunrise Time`/`Sunset Time`, el usuario reporta el
-siguiente comportamiento en una corrida completa de Play:
-
-1. Al iniciar: cielo estrellado, de noche, Poison activo.
-2. La luna llega a su punto máximo visual.
-3. El Poison se desactiva (`Time` cruza `Sunrise Time = 6`) — **pero el
-   cielo sigue estrellado y la luna sigue en el cielo.**
-4. Más tarde, el cielo rota, se mete la luna, sale el sol (visual de
-   alba/aurora, en estado de eclipse).
-5. El sol llega a su punto máximo visual.
-6. El Poison se reactiva (`Time` cruza `Sunset Time = 18`) — **pero
-   visualmente todavía es de día, no hay luna en el cielo.**
-7. Luego se mete el sol, sale la luna con cielo estrellado, y se repite.
-
-### Causa raíz (diagnóstico, no requiere inspección adicional para confirmarla)
-
-Hay **dos sistemas independientes** corriendo sobre la misma variable
-`Time`, nunca calibrados entre sí:
-
-- **Sistema lógico** — `CheckLight → In Range(Time, Sunrise Time, Sunset
-  Time)`. Ahora con `6`/`18`, decide luces y Poison. Es un simple
-  booleano día/noche sin relación directa con ningún valor de rotación.
-- **Sistema visual** — Float Track `Sun Yaw` del Timeline
-  (`Time=0 → 0°`, `Time=24 → 360°`, lineal), que rota el
-  `DirectionalLight` y, por la jerarquía de componentes ya documentada
-  (`Moon` → `SM_SkySphere`), arrastra consigo la posición visual de luna
-  y estrellas. **Estos keyframes son valores de prueba puestos para
-  resolver el Bug 4** (no había movimiento visual en absoluto) — nunca
-  fueron calibrados para que el sol esté sobre el horizonte
-  específicamente entre `Time=6` y `Time=18`.
-
-Como ambos sistemas leen la misma variable `Time` pero con criterios
-independientes (uno un simple umbral numérico, el otro una curva de
-rotación sin relación definida con ese umbral), el momento en que el
-Poison se activa/desactiva no coincide con lo que el jugador ve en el
-cielo. **No hay ningún pin desconectado ni error de lógica que corregir
-en el wiring** — es una curva sin calibrar, que ya estaba marcada como
-pendiente ("valores de prueba son provisionales — falta definición de
-diseño final de la curva") desde la sesión del Bug 4.
-
-### Propuesta a validar con el líder de proyecto
-
-Convención sugerida, consistente con los umbrales lógicos ya aprobados
-(`Sunrise=6` / `Sunset=18`):
-
-| Momento | Time | Evento visual |
+| # | Bug | Estado |
 |---|---|---|
-| Sale el sol | 6 | Sol aparece en el horizonte |
-| Punto máximo del sol | 12 | Sol en el cenit |
-| Se mete el sol / sale la luna | 18 | Transición sol↔luna |
-| Punto máximo de la luna | 0 / 24 | Luna en el cenit |
-| Se mete la luna | 6 | Vuelve a empezar el ciclo |
+| 1 | Timeline con ERROR tras migración (creado desde Variables en vez de My Blueprint → Timelines) | ✅ Resuelto |
+| 2 | `M_SkySphere` incompleto (`MF_SunEclipse` faltante) | ✅ Resuelto |
+| 3 | Sin cielo ni luz en PIE (`Hidden In Game` activo en `BP_DayNight`) | ✅ Resuelto |
+| 4 | Ciclo corría sin resultado visual (`Sun Yaw` sin keyframes) | ✅ Resuelto — curva ahora calibrada (ver arriba) |
+| 5 | Incógnita: el original funciona pese a `Sun Yaw` vacío | 🟣 Sin resolver, no bloqueante |
+| 6 | Poison "permanente" / luces siempre de noche (`Sunrise`/`Sunset` en `0.0` sin Instance Editable) | ✅ Resuelto — variables expuestas |
+| 7 | Desincronización lógica día/noche vs curva visual `Sun Yaw` | ✅ **Resuelto esta sesión** — `Sunrise 6` / `Sunset 18` + `Sun Yaw` 90→450 Linear |
+| 8 | Juego arrancaba de noche | ✅ **Resuelto esta sesión** — causas: `Sunrise 12`/`Sunset 24` temporales (workaround visual) + Timeline siempre arrancando en `Time = 0`. Fix: valores `6`/`18` + variable `Start Time` + `Set New Time` antes de `Play` |
+| 9 | Noche demasiado clara (SkyLight fijo) | ✅ **Resuelto esta sesión** — `Then 3` con intensidad y color día/noche |
 
-Con esta convención, "luna en el cielo" coincidiría exactamente con el
-rango en que el Poison está activo (`18–6`), y "sol en el cielo" con el
-rango de día (`6–18`) — el resultado más intuitivo para el jugador.
-
-**Pregunta pendiente de respuesta del líder de proyecto:** ¿se aprueba
-esta convención de horarios, o se prefiere otro reparto? Sin esta
-aprobación no se debe tocar la curva `Sun Yaw` — el fix depende
-directamente de esta decisión.
-
-### Acción pendiente antes de recalibrar la curva (próxima sesión)
-
-Para calibrar `Sun Yaw` con precisión hace falta primero medir, no
-adivinar, en qué valor real de `Time` ocurre cada transición visual
-actual:
-
-1. Agregar un `Print String` temporal del valor `Time` (o usar `WBP_Time`
-   si ya está en el Level Blueprint) mientras se corre el juego.
-2. Anotar el valor de `Time` en: luna en su punto máximo, luna
-   metiéndose, sol saliendo, sol en su punto máximo, sol metiéndose.
-3. Con esos 5 valores reales, ajustar los keyframes de `Sun Yaw`
-   (probablemente se necesiten más de los 2 keyframes actuales) para que
-   coincidan con la convención aprobada por el líder de proyecto.
+### Historial — workaround `Sunrise 12` / `Sunset 24`
+Antes de esta sesión el usuario había puesto `Sunrise = 12` y `Sunset = 24`
+porque el sol visual salía en `Time 12` y se ocultaba en `Time 24` (curva
+desfasada). Era un parche sobre la lógica; el fix correcto fue mover la
+curva visual. Si en el futuro se vuelve a ver desfase, **no** tocar
+`Sunrise`/`Sunset`: recalibrar `Sun Yaw`.
 
 ---
 
-## Comportamiento Visual Confirmado (descripción del usuario — Asset Original)
+## Comportamiento Visual (Asset Original)
 
-- A lo largo de un ciclo (Time 0→24), el cielo se mueve de forma continua.
-- Aparece un efecto de **eclipse solar** sobre el sol (controlado por el
-  parámetro `Eclipse Phase` de `MI_SkySpherePhases` — ver Bug 2, valores
-  completos confirmados por PDF esta sesión).
-- Aproximadamente en `Time ≈ 18`, ocurre el **ocaso**: el sol llega al
-  límite de la pantalla (se oculta), y del lado opuesto **sale la luna**,
-  con un visual de **fase lunar** (controlado por `MoonPhase`).
-- Cuando la luna está en el cielo, **aparecen las estrellas**, que son
-  parte de un material separado y **están en rotación**.
-- El usuario percibe que sol, luna y estrellas se mueven a **timings
-  distintos entre sí** — posible efecto de la diferencia de distancia/
-  escala entre los assets. No confirmado como bug o diseño intencional.
+- Durante el ciclo el cielo se mueve de forma continua.
+- Efecto de **eclipse solar** sobre el sol (`Eclipse Phase`).
+- Al ocaso el sol se oculta y del lado opuesto sale la luna con fase
+  (`MoonPhase`).
+- Con luna en el cielo aparecen estrellas (material separado, en rotación).
+- Sol, luna y estrellas se mueven a timings distintos entre sí.
 
-### Problemas visuales conocidos del ORIGINAL (heredados, a corregir)
+### Problema Visual 1 — Cielo iluminado de noche
+**Estado: 🟢 Mayormente resuelto esta sesión** (pendiente validación final del
+usuario con valores definitivos). Causas contribuyentes confirmadas:
+`Sunrise`/`Sunset` en `0.0` (resuelto antes) y `SkyLight` con intensidad fija
+(resuelto con `Then 3`). Sin revisar: `Intensity` del `DirectionalLight`
+(2.75 lux) por si de noche aportara luz.
 
-**Problema Visual 1 — El cielo se ilumina de noche como si fuera de día**
-Cuando la luna está en su punto máximo (medianoche visual), el cielo se
-ve iluminado de forma similar al día — la única señal de que es de noche
-es que el cielo está estrellado. El usuario atribuye esto probablemente a
-la rotación del `DirectionalLight`: como el Directional Light sigue
-siendo la fuente de luz primaria del `SkyAtmosphere` sin importar la hora,
-es posible que su `Intensity` (2.75 lux, confirmado en sesión anterior)
-no se reduzca ni se apague correctamente durante la noche, o que el
-`CheckLight`/`MPC_IsLight` (`LightLevel`) controle las luces del nivel
-pero no la iluminación atmosférica del cielo en sí.
-**Confirmado nuevamente esta sesión como pendiente** — el usuario reporta
-que en general el sistema ya funciona, pero la transición de iluminación
-día/noche sigue viéndose extraña (da la sensación de que "siempre es de
-día" aunque el cielo sí se altera ligeramente). Esto es consistente con la
-hipótesis original: el cielo (SkyAtmosphere) cambia visualmente, pero la
-intensidad de luz percibida no baja lo suficiente. **Sigue pendiente para
-sesión de corrección visual — no investigado a fondo todavía.**
+### Problema Visual 2 — Las estrellas rotan
+Heredado del original. A velocidad de debug (`Total Day Night Time = 1`) es
+esperable que el movimiento sea visible. Pendiente:
+1. Re-evaluar a velocidad de juego real.
+2. Si persiste, inspeccionar el grafo de `M_SkySphere` (UV ligadas al mesh vs
+   Panner independiente).
 
-> **⚠️ Nueva pista, sesión de implementación del Poison nocturno (ver
-> `22_SYSTEM_LunarPhases_EclipseStates.md`):** al conectar un `Branch`
-> nuevo al mismo booleano `NOT(In Range(Time, Sunrise Time, Sunset Time))`
-> que ya usa `For Each Loop (All Lights in Level) → Turn on/Off Light`,
-> se confirmó por `Print String` que ese booleano **nunca cambia de
-> valor** — siempre evalúa "es de noche" como `True`, sin importar cuántos
-> ciclos de día/noche transcurran. Como esta misma condición alimenta la
-> rama de luces del nivel, **es candidato directo a ser la causa raíz de
-> este Problema Visual 1**: si `Sunrise Time`/`Sunset Time` están mal
-> configurados (iguales, ambos en `0.0`, o en orden invertido), tanto el
-> apagado/encendido de luces como la sensación de "siempre es de día"
-> podrían tener el mismo origen. **No confirmado todavía — pendiente
-> revisar los valores reales de `Sunrise Time`/`Sunset Time` en la
-> instancia de `BP_DayNight` como primera acción de la próxima sesión.**
-> Ver detalle completo del diagnóstico en
-> `22_SYSTEM_LunarPhases_EclipseStates.md`.
-
-**Problema Visual 2 — Las estrellas rotan**
-El material/textura de estrellas (`T_Stars`, confirmado esta sesión como
-el parámetro `StarTexture` de `MI_SkySpherePhases`) se ve rotando en el
-cielo, lo cual es visualmente incorrecto respecto a cómo se comportaría un
-cielo estrellado real.
-
-**Aclaración importante añadida esta sesión:** la velocidad actual del
-ciclo está configurada para debugging (`Total Day Night Time = 1`, ciclo de
-24h completo en ~24 segundos reales). A esa velocidad de prueba, **es
-esperable que las estrellas parezcan no moverse** si el mecanismo de
-rotación fuera el correcto (una esfera celeste que rota una vez por noche
-se movería de forma casi imperceptible en unos pocos segundos de juego).
-El hecho de que el movimiento de las estrellas sea visible incluso a la
-velocidad de debug es lo que hace sospechar que la rotación está atada
-incorrectamente al mismo transform que mueve la luna (`Moon` →
-`SM_SkySphere`, ver jerarquía de componentes) en vez de tener su propio
-mecanismo, mucho más lento, independiente.
-
-**Confirmado por PDF esta sesión:** ningún parámetro del grupo `Stars` en
-`MI_SkySpherePhases` controla rotación — el único parámetro de rotación en
-todo el material instance es `MoonGlowRotation` (grupo Moon). Esto apoya
-la hipótesis de que la rotación de estrellas es un efecto colateral del
-movimiento del mesh `SM_SkySphere` (hijo de `Moon`), no un parámetro de
-material mal configurado.
-
-**Pendiente de resolver, en orden sugerido:**
-1. Volver a observar el comportamiento de las estrellas a la **velocidad
-   de juego real** planeada (no la velocidad de debug actual) — es posible
-   que a esa velocidad el movimiento sea aceptable o imperceptible, y que
-   no sea necesario ningún fix.
-2. Si sigue siendo visualmente incorrecto a velocidad real, inspeccionar
-   el grafo de `M_SkySphere` para confirmar si las UVs de `T_Stars` están
-   ligadas a coordenadas del mesh (World Position / Object rotation) o a
-   un Panner/rotación independiente — esto no fue confirmado en esta
-   sesión ni en el PDF.
-3. Confirmar si esto es un bug heredado del original tal cual (dato
-   registrado: el usuario confirma que ambos problemas visuales —1 y 2—
-   ya existían en el proyecto original en 5.5.4, no fueron introducidos
-   por la migración).
-
-**Nota importante (sin cambios):** ambos problemas visuales existen en el
-**original**, no son introducidos por la migración — se heredan tal cual.
+Ambos problemas visuales existen en el **original**, no los introdujo la
+migración.
 
 ---
 
 ## Optimización — Pendiente de comprobar
 
-El cliente reportó que el sistema de ciclo día/noche **baja
-significativamente el framerate**. Esto **no ha sido verificado
-directamente por el equipo todavía** — se registra como tarea pendiente,
-no como hallazgo confirmado. Sin cambios esta sesión — sigue pendiente de
-perfilar antes de tocar código.
+El cliente reportó caída de framerate con el ciclo activo. **No verificado
+por el equipo.** Candidatos (sin confirmar):
+- `VolumetricCloud` (costoso históricamente).
+- `Update Data` por frame (el incremento es trivial, pero hay lógica por frame).
+- `CheckLight` cada `Total Day Night Time` segundos: ahora ejecuta además
+  Poison, `Night Only Items` y `Set Intensity`/`Set Light Color` del
+  `SkyLight`. Con muchas luces, `For Each Loop (All Lights in Level)` suma costo.
+- `SkyLight` con **Real Time Capture** activo (recaptura la escena
+  periódicamente; costo de render). Candidato nuevo a perfilar.
+- Instrucciones de shader de `M_SkySphere` (455 vs 483).
 
-**Candidatos a revisar cuando se investigue (sin confirmar aún):**
-- `VolumetricCloud` es históricamente uno de los componentes más costosos
-  en tiempo de render dentro de sistemas de cielo en Unreal — candidato
-  principal a perfilar primero.
-- `Update Data` disparándose cada frame vía el pin `Update` del Timeline
-  (ya documentado como nota de diseño) — el incremento de `Day` en sí es
-  trivial, pero confirma que hay lógica ejecutándose cada frame sin
-  necesidad real de esa frecuencia.
-- `CheckLight` corre vía `Set Timer by Event` con `Total Day Night Time`
-  como intervalo — con el valor actual (`1`), esto dispara **cada 1
-  segundo**, iterando `For Each Loop (All Lights in Level)` cada vez. Con
-  muchas luces en el nivel, esto podría ser una fuente real de costo
-  recurrente. Candidato secundario a perfilar.
-- Conteo de instrucciones de shader de `M_SkySphere` (455, con posible
-  diferencia de 28 respecto al original) — no se considera prioritario
-  para el problema de framerate reportado, pero queda relacionado.
-
-**Acción pendiente:** correr el proyecto con el profiler de Unreal (`stat
-unit`, `stat gpu`, o Unreal Insights) con el ciclo día/noche activo, para
-confirmar o descartar cada candidato antes de optimizar nada a ciegas.
+**Acción:** perfilar con `stat unit`, `stat gpu` o Unreal Insights antes de
+optimizar.
 
 ---
 
 ## WBP_Time — Widget de referencia (no bloqueante)
 
-Confirmado como widget de **solo lectura**. No controla ni dispara nada en
-`BP_DayNight` — únicamente consulta sus variables `Day` y `Time` vía
-`Get All Actors Of Class (BP Day Night)` y las formatea como texto
-(`"Day {Days} | Time {Hourse}:{Minutes}"`).
-
-**Nuevo esta sesión (PDF):** el original confirma que la instanciación
-(`Create WBP Time Widget` → `Add to Viewport`) vive en el **Level
-Blueprint**, disparada desde `Event BeginPlay`. **Pendiente confirmar si
-esta lógica existe en el Level Blueprint de Light Paradox** — si no
-existe, es la razón más probable por la que `WBP_Time` está marcado como
-"sin replicar" en este documento.
-
-No es necesario para que el ciclo funcione (ya confirmado funcionando sin
-él). Útil como herramienta de diagnóstico visual en pantalla y como
-utilidad de UI a futuro.
+Solo lectura. Consulta `Day` y `Time` vía `Get All Actors Of Class
+(BP Day Night)` y formatea `"Day {Days} | Time {Hourse}:{Minutes}"`. El PDF
+indica que su instanciación vive en el Level Blueprint. Útil como herramienta
+de diagnóstico en pantalla (por ejemplo para validar el DataTable de ciclos
+lunares). Pendiente confirmar si existe en el Level Blueprint de Light Paradox.
 
 ---
 
@@ -582,72 +390,39 @@ utilidad de UI a futuro.
 
 | Problema | Notas | Estado |
 |---|---|---|
-| Bug 5 — Sun Yaw vacío en original pero el original funciona visualmente | Contradicción sin resolver. No bloqueante — sistema ya funcional con fix práctico del Bug 4. PDF no aporta información nueva sobre esto. | 🟣 Pendiente investigación, sin prioridad urgente |
-| Problema Visual 1 — cielo se ilumina de noche | Heredado del original. Mejoró tras fijar `Sunrise Time`/`Sunset Time` a `6.0`/`18.0` (antes ambos en `0.0`) — pendiente de validar por completo si quedó resuelto o si falta ajuste adicional en Intensity del Directional Light. | 🟡 Pendiente terminar de validar |
-| **Sunrise Time / Sunset Time en `0.0`, sin Instance Editable** | ✅ **RESUELTO esta sesión.** Causa raíz de: (1) Poison "permanente" (ver `22_SYSTEM_LunarPhases_EclipseStates.md`), (2) probable causa raíz de Problema Visual 1. Fix: variables expuestas (Instance Editable) + `Sunrise=6.0`/`Sunset=18.0` en Class Defaults e instancia. Confirmado en juego para el caso del Poison. | ✅ Resuelto |
-| **Desincronización entre lógica día/noche (`Sunrise`/`Sunset Time`) y curva visual (`Sun Yaw`)** | Nuevo hallazgo esta sesión — ver sección dedicada arriba. El Poison y las luces cambian según `Time=6/18`, pero el sol/luna visualmente no están calibrados para aparecer/desaparecer en esos mismos valores de `Time`. Requiere aprobación del líder de proyecto sobre convención de horarios antes de recalibrar `Sun Yaw`. | 🔴 Pendiente aprobación de diseño + recalibración de keyframes |
-| Problema Visual 2 — estrellas rotando | Heredado del original. PDF confirma que no hay parámetro de rotación en el grupo Stars de MI_SkySpherePhases — refuerza hipótesis de que la rotación viene del transform del mesh, no del material. Pendiente re-evaluar a velocidad de juego real antes de decidir si requiere fix. | 🟡 Pendiente sesión de corrección visual |
-| Optimización — framerate reportado por cliente | No verificado aún por el equipo. Candidatos: VolumetricCloud, Update Data por frame, CheckLight con Total Day Night Time=1 (dispara cada 1s) | 🔴 Pendiente perfilar antes de optimizar |
-| Valores definitivos de keyframes Sun Yaw | Actualmente 0°→360° como prueba. Falta definición de diseño final (interpolación, rango, timing de ocaso ~18h) | 🟡 Pendiente definición de diseño |
-| Diferencia de 28 instrucciones de shader en M_SkySphere (455 vs 483) | Posible nodo/función menor faltante adicional a MF_SunEclipse | ⏳ Pendiente, prioridad menor |
-| Duplicado `gradient_sphere` / `GradientSphere` | Ninguna de las dos aparece en la lista de parámetros de MI_SkySpherePhases confirmada por PDF esta sesión (la textura activa es T_Stars). Sigue sin confirmar dónde se usa cada una. | ⏳ Pendiente |
-| Tipo exacto de variable `Day` (Integer vs Float) sin confirmar | Inferido del nodo Add, no confirmado desde panel Variables | ⏳ Pendiente |
-| `Update Data` disparado cada frame en vez de por ciclo | Diseño del original, no bug de migración. Relevante también para optimización | ⏳ Pendiente decisión de diseño |
-| `Day Ended` sin conexión | Confirmado igual en original y migrado — no es bug. Candidato natural para mover `Update Data` fuera del tick por frame | ⏳ Sin prioridad — oportunidad de mejora futura |
-| WBP_Time sin replicar | Nuevo dato del PDF: su instanciación vive en el Level Blueprint (Create Widget + Add to Viewport en BeginPlay). Pendiente confirmar si esa lógica existe en el Level Blueprint de Light Paradox. | ⏳ Pendiente, baja prioridad |
-| `MF_SunEclipse` recreada manualmente en vez de migrada | Confirmado funcionalmente correcto — efecto de eclipse visible y funcionando | ✅ Verificado funcional |
-| **Nombre del actor: BP_DayNight vs BP_DayNightCycle (PDF)** | Discrepancia detectada esta sesión — ver sección dedicada arriba. No confirmado cuál es el nombre real actual en el proyecto. | 🔴 Pendiente verificación en el editor |
-| **Validación sistemática vs PDF original** | El PDF cubre variables y parámetros de material, no EventGraph/Timeline. Falta comparar sistemáticamente cada valor de ejemplo (Eclipse/Moon) contra el comportamiento reproducido en Light Paradox. | 🟡 Pendiente, en progreso incremental |
-| **Fases lunares y eclipse vinculadas a Estados** | Nuevo sistema de diseño — no implementado aún. Ver `22_SYSTEM_LunarPhases_EclipseStates.md`, sesión de hoy planea testear con State_Poison. | 🔴 Pendiente — inicio de diseño e implementación esta sesión |
+| **Interpolar iluminación con `Time`** | **Nota pendiente solicitada esta sesión.** Hoy `SkyLight` (intensidad y color) cambia de golpe en `Time = 6` y `Time = 18` porque `Then 3` corre en el timer de `CheckLight`. Mejora propuesta: interpolar con `Time` (por ejemplo `Lerp` con alpha derivada de `Time` y una ventana alrededor de 6 y 18, o curvas Float/Color dentro del Timeline) para amanecer/atardecer graduales. Considerar también el flash del primer disparo de `CheckLight`: si algún día se arranca de noche, el `SkyLight` usa su valor de clase (`0.3`) hasta el primer tick del timer. | 🟡 Pendiente — mejora visual, no bloqueante |
+| **`Day` se incrementa cada frame** | `Update Data` se conecta al pin `Update` del Timeline. Bloquea el "cada cuántos días" del DataTable de ciclos lunares/eclipses. **Corrección a una sugerencia previa:** el pin `Day Ended` no sirve, porque `DayEnded` es Float Track (sin pin de ejecución). Propuesta: detectar el reinicio del loop (`Time` actual < `Previous Time`) y llamar `Update Data` solo entonces. Ver siguiente paso. | 🔴 Pendiente — siguiente tarea |
+| **Verificar `Moon.Temperature`** | El usuario nota que cambiar la temperatura de `Moon` casi no afecta la mesh del personaje; mover `Light Color` del `SkyLight` sí. Inferencia (no confirmada): `Moon` tiene `Intensity 0.26 lux`, muy tenue, así que su tinte casi no se ve; el `SkyLight` aporta más luz ambiente. Prueba: subir `Moon.Intensity` temporalmente a `2.0`; si el tinte azul aparece, no hay error. | 🟡 Pendiente de verificar |
+| Valores finales de `Moon` y `SkyLight` Night | Capturas anteriores a los ajustes del usuario. Re-capturar Details y actualizar tablas. | ⏳ Pendiente documentar |
+| Intensity del `DirectionalLight` (2.75 lux) sin revisar | Verificar que de noche no aporte luz | ⏳ Pendiente |
+| Problema Visual 2 — estrellas rotando | Ver sección | 🟡 Pendiente |
+| Optimización — framerate | Ver sección | 🔴 Pendiente perfilar |
+| Bug 5 (incógnita Sun Yaw vacío en el original) | No bloqueante | 🟣 Sin urgencia |
+| Diferencia de 28 instrucciones en `M_SkySphere` | | ⏳ Prioridad menor |
+| Duplicado `gradient_sphere` / `GradientSphere` | | ⏳ Pendiente |
+| Tipo exacto de `Day` | Evidencia de Integer por captura; confirmar | ⏳ Pendiente |
+| `WBP_Time` sin replicar | Ver sección | ⏳ Baja prioridad |
+| `MF_SunEclipse` recreada manualmente | Verificada funcional | ✅ |
+| Validación sistemática vs PDF | Valores de Eclipse/Moon pendientes de comparar | 🟡 En progreso |
+| Fases lunares y eclipses vinculadas a Estados | Siguiente sistema, ver `22_SYSTEM_LunarPhases_EclipseStates.md`. Primer prototipo: DataTable con debug log. | 🔴 En curso |
 
 ---
 
-## Checklist de Pendientes — próxima sesión (en orden sugerido)
+## Checklist de pendientes — próxima sesión (orden sugerido)
 
-1. 🔴 **(Nueva prioridad #1, esta sesión)** Obtener aprobación del líder de
-   proyecto sobre la convención de horarios sol/luna propuesta (sol
-   visible `6–18`, luna visible `18–6`, picos en `12` y `0/24`
-   respectivamente) — ver sección "Nuevo hallazgo esta sesión" arriba. Sin
-   esto no se debe tocar la curva `Sun Yaw`.
-2. 🔴 Una vez aprobada la convención: medir con `Print String`/`WBP_Time`
-   el valor real de `Time` en cada transición visual actual (luna en
-   pico, luna metiéndose, sol saliendo, sol en pico, sol metiéndose) y
-   recalibrar los keyframes de `Sun Yaw` para que coincidan.
-3. 🔴 **Confirmar nombre real del actor** (`BP_DayNight` vs
-   `BP_DayNightCycle`) directamente en el Content Browser — corregir este
-   archivo si es necesario.
-4. 🟡 **Investigar Problema Visual 1** (cielo iluminado de noche) —
-   revisar si `CheckLight`/`MPC_IsLight` debe también controlar
-   intensidad del `SkyAtmosphere`/`DirectionalLight`, no solo las luces
-   del nivel vía `BPI_IsLight`.
-4. 🟡 **Re-evaluar Problema Visual 2** (estrellas rotando) a la velocidad
-   de juego real (no velocidad de debug) antes de decidir si requiere fix.
-   Si sigue siendo incorrecto, ubicar en el grafo de `M_SkySphere` qué
-   nodo controla la rotación de `T_Stars`.
-5. 🔴 **Perfilar rendimiento** con el ciclo activo (`stat unit`, `stat
-   gpu`, o Unreal Insights) antes de optimizar cualquier candidato a
-   ciegas.
-6. 🟣 **(Sin urgencia)** Investigar Bug 5.
-7. ⏳ Resolver diferencia de 28 instrucciones de shader en `M_SkySphere`.
-8. ⏳ Confirmar cuál de `gradient_sphere` / `GradientSphere` está en uso real.
-9. 🔴 **Iniciar sistema de fases lunares/eclipse vinculadas a Estados** —
-   ver `22_SYSTEM_LunarPhases_EclipseStates.md`, testear con State_Poison.
-10. 🟡 Confirmar si el Level Blueprint de Light Paradox ya crea/agrega
-    `WBP_Time` al viewport (dato nuevo del PDF) — si no, decidir si se
-    replica ahora o se pospone.
+1. 🔴 Mover el incremento de `Day` fuera del tick por frame (detección de reinicio de loop) y crear el DataTable de ciclos lunares/eclipses con debug log (`STR_CelestialEvent`, `DT_CelestialEvents`).
+2. 🟡 Interpolar iluminación del `SkyLight` con `Time` (ver deuda técnica).
+3. 🟡 Verificar `Moon.Temperature` (prueba con `Intensity 2.0`).
+4. ⏳ Re-capturar Details de `Moon`/`SkyLight`/variables `SkyLight ... Night` y actualizar este archivo.
+5. 🟡 Revisar `Intensity` del `DirectionalLight` de noche.
+6. 🔴 Perfilar rendimiento (incluye `Real Time Capture` del `SkyLight`).
+7. 🟡 Re-evaluar Problema Visual 2 a velocidad real.
+8. ⏳ Diferencia de shader en `M_SkySphere`; duplicado `gradient_sphere`.
+9. 🟡 Confirmar creación de `WBP_Time` en el Level Blueprint.
+10. 🟣 Bug 5 (sin urgencia).
 
 ---
 
-*Archivo actualizado — sesión Light Paradox. Se incorpora comparación
-contra el documento original del programador (`Day_Night_Module.pdf`):
-lista completa de parámetros de `MI_SkySpherePhases`, valores de ejemplo
-de Eclipse/Moon Phase, confirmación de variables Time/Total Day Night
-Time, y lógica de instanciación de WBP_Time en el Level Blueprint.
-Se documenta discrepancia de nombre BP_DayNight vs BP_DayNightCycle como
-pendiente de verificación. Se aclara Problema Visual 2 con la ausencia de
-parámetro de rotación en el grupo Stars del material, y se añade la
-consideración de volver a evaluar el problema a velocidad de juego real
-antes de la velocidad de debug actual. Se registra el inicio del sistema
-de fases lunares/eclipse vinculadas a Estados en archivo nuevo
-`22_SYSTEM_LunarPhases_EclipseStates.md`.*
-*Project: Light Paradox · Base: EasySurvivalRPGv5 (sistema Day/Night migrado de proyecto externo UE 5.5.4)*
+*Archivo actualizado — sesión Light Paradox (calibración día/noche).*
+*Cambios: nombre `BP_DayNight` confirmado; `Sunrise/Sunset` = 6/18 con historial del workaround 12/24; `Sun Yaw` recalibrado (90→450, Linear) y tabla de verificación confirmada; variable `Start Time` + `Set New Time` en BeginPlay (juego arranca de día); `CheckLight` Sequence documentado completo con `Then 3` (SkyLight Intensity y Color día/noche) y variables nuevas; valores de Details de `Moon` y `SkyLight`; `Night Only Items` con 3 instancias; bugs 6–9 resueltos; pendientes nuevos: interpolación con `Time`, verificar `Moon.Temperature`, `Day` por frame (con corrección sobre el pin `Day Ended`), costo de `Real Time Capture`.*
+*Project: Light Paradox · Base: EasySurvivalRPGv5 (Day/Night migrado de UE 5.5.4) · UE 5.4.4*
