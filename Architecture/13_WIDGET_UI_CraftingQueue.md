@@ -2,7 +2,7 @@
 ### Widget: UI_CraftingQueue
 ### Base Asset: EasySurvivalRPGv5
 ### Fuente: Inspección directa — sesión Light Paradox (Lógica 1 rediseño + Lógica 4)
-### Actualizado: sesión Light Paradox — Fix candados fantasma en Action/Crafting Queue
+### Actualizado: sesión Light Paradox — Orden de remoción de runas (contradicción IsBlocked/bIsLocked RESUELTA + bug nuevo)
 
 ---
 
@@ -98,7 +98,7 @@ Entry →
   SET PendingTargetSlot ← TargetSlot
   SET PendingSourceContainer ← SourceContainer
   SET PendingSourceSlot ← SourceSlot
-  → GET LockedSlot → SET bIsLocked = True
+  → GET LockedSlot → SET IsBlocked = True          ← ✅ CORREGIDO (antes decía bIsLocked)
   → GET LockedSlot → GET LockIcon → Set Visibility (Visible)
   → Create Widget (Class: UI_RuneAssignQueue)
   → Init Rune Assign Queue (todos los inputs)
@@ -110,30 +110,15 @@ Entry →
       Event: Create Event → OnRuneAssignComplete
 ```
 
-> **⚠️ Contradicción detectada — sesión Fix candados fantasma, pendiente verificar en editor:**
-> los console errors de runtime nombran el nodo como `Set IsBlocked`:
-> ```
-> Blueprint Runtime Error: "Accessed None trying to read property LockedSlot".
->   Node: Set IsBlocked  Graph: AddRuneToQueue  Function: Add Rune to Queue  Blueprint: UI_CraftingQueue
-> ```
-> pero la documentación de este flujo (arriba) describe ese mismo paso como
-> `GET LockedSlot → SET bIsLocked = True`. El log de runtime es la fuente de mayor prioridad
-> (es el comportamiento real compilado, no una inferencia de sesión anterior) — indica que el
-> nodo real en el grafo podría estar seteando `IsBlocked` en vez de `bIsLocked` sobre
-> `LockedSlot`. **No confirmado todavía.**
+> **✅ Contradicción RESUELTA (sesión Orden de remoción de runas):** el log de runtime
+> nombraba el nodo como `Set IsBlocked` mientras este .md decía `SET bIsLocked`. El usuario
+> verificó en el editor los nodos reales de `AddRuneToQueue` **y** de `OnRuneAssignComplete`:
+> **ambos usan `IsBlocked`**. La documentación estaba equivocada. `bIsLocked` es una variable
+> huérfana en `UI_ItemSlot` (sin Get ni Set en el proyecto).
 >
-> **Por qué importa:** `IsBlocked` e `bIsLocked` son gates distintos y no intercambiables (ver
-> `04_BLUEPRINT_UI_ItemSlot.md`, Notas de arquitectura): `IsBlocked` es para operaciones de
-> repair/use, `bIsLocked` es específicamente el gate del sistema de runas que controla
-> `LockIcon`. Si el nodo real está seteando `IsBlocked` en vez de `bIsLocked`, el candado visual
-> (`LockIcon`) podría no estar sincronizado correctamente con el bloqueo real de drops en el
-> slot, aunque el síntoma no sea evidente en todos los casos.
->
-> **Acción pendiente:** abrir `UI_CraftingQueue → AddRuneToQueue` en el editor y confirmar el
-> nombre exacto de la variable en el primer nodo `SET` después de `GET LockedSlot`. Si dice
-> `IsBlocked`, corregirlo a `bIsLocked` (Compile + Save). Si dice `bIsLocked`, actualizar esta
-> nota confirmando que el nombre del nodo en el log fue simplemente el nombre interno mostrado
-> por Unreal para esa variable y no hay bug real aquí.
+> **Consecuencia de diseño (deuda registrada):** el cooldown de runas depende de `IsBlocked`,
+> variable compartida con repair/use del asset base. Es frágil. No se corrige ahora porque el
+> sistema funciona; ver Deuda técnica.
 
 ---
 
@@ -146,7 +131,7 @@ Entry →
 **Flujo:**
 ```
 OnRuneAssignComplete →
-  GET PendingLockedSlot → SET bIsLocked = False
+  GET PendingLockedSlot → SET IsBlocked = False     ← ✅ CORREGIDO (antes decía bIsLocked)
   → GET PendingLockedSlot → GET LockIcon → Set Visibility (Collapsed)
   → GET RuneQueueWidgets → Get [0] → Remove From Parent
   → RuneQueueWidgets → Remove Index (0)
@@ -155,6 +140,11 @@ OnRuneAssignComplete →
 > **Nota:** Index 0 es temporal. Cuando haya múltiples runas en queue
 > simultáneamente necesitará lógica para identificar cuál widget
 > corresponde al timer que disparó.
+
+> **Interacción con `bRemovalLocked` (sesión Orden de remoción de runas):** este evento
+> escribe `IsBlocked`, nunca `bRemovalLocked`. Son gates independientes, así que el fin de un
+> cooldown no puede desbloquear un slot que debe seguir bloqueado por orden de remoción.
+> El velo (`RemovalLockOverlay`) y el candado (`LockIcon`) son widgets distintos.
 
 ---
 
@@ -167,6 +157,7 @@ OnRuneAssignComplete →
 | BtnCancel deshabilitado | El cliente confirmó que no se necesita cancelación |
 | Éxito → bloquea slot SIGUIENTE | El slot que se desbloqueará al terminar el cooldown |
 | Fallo → bloquea slot ACTUAL | Penalización — el jugador debe esperar el cooldown para reintentar |
+| Remoción de runas en orden descendente | Implementado aparte con `bRemovalLocked` (ver `04` y `08`), independiente del cooldown |
 
 ---
 
@@ -179,11 +170,13 @@ OnRuneAssignComplete →
 `AddRuneToQueue` es llamada desde `UI_ItemSlot` → `OnDrop` cuando el ítem
 dropeado es detectado como runa via `Does Container Match Tag Query`.
 
-> **✅ Actualizado — sesión Fix candados fantasma:** desde esta sesión, `OnDrop` solo llega a
-> llamar `AddRuneToQueue` si además de `Does Container Match Tag Query` se cumple
-> `IsValidRuneDestination` (el slot destino es realmente un slot de runa dentro del
-> `EquipmentContainer`) y el `Container` del slot pasa `Cast To BP_EquipmentComponent`. Ver
-> `04_BLUEPRINT_UI_ItemSlot.md`, sección OnDrop, para el detalle completo del fix.
+> **✅ Actualizado — sesión Fix candados fantasma:** `OnDrop` solo llega a llamar
+> `AddRuneToQueue` si además de `Does Container Match Tag Query` se cumple
+> `IsValidRuneDestination` y el `Container` del slot pasa `Cast To BP_EquipmentComponent`.
+> Ver `04_BLUEPRINT_UI_ItemSlot.md`, sección OnDrop.
+>
+> **⚠️ Limitación conocida:** esa validación **no comprueba que el slot destino esté vacío**
+> — ver bug abierto abajo.
 
 ---
 
@@ -218,31 +211,43 @@ siempre entraba en ÉXITO y llamaba a `GetNextRuneSlot(CurrentSlotNumber: GET Sl
 (`08_BLUEPRINT_UI_Character.md`), cuyo `Select` solo tiene casos para `7, 14–22`. Para
 cualquier otro `SlotNumber`, el `Select` devuelve `None`, que se pasa como `LockedSlot` a
 `AddRuneToQueue` — de ahí los `Accessed None` sobre `LockedSlot`/`PendingLockedSlot`. El
-widget `UI_RuneAssignQueue` igual se creaba y se agregaba a `RuneQueueBox` (esos nodos no
-dependen de `LockedSlot`), quedando huérfano — sin candado real que desbloquear al completar
-el timer.
+widget `UI_RuneAssignQueue` igual se creaba y se agregaba a `RuneQueueBox`, quedando huérfano.
 
-Un caso relacionado, descubierto durante el diagnóstico: el problema también ocurría con
-`SlotNumber` dentro del `EquipmentContainer` pero en un slot no-runa (Head=0, Body=1, etc.),
-y con inventarios ampliados por mochila, donde el índice de un slot de inventario podía
-coincidir numéricamente con el rango 14–22 reservado a runas duplicadas de Head — confirmando
-que `SlotNumber` es relativo al `Container` que lo contiene, no un ID global (ver nota en
-`04_BLUEPRINT_UI_ItemSlot.md`).
+Un caso relacionado: el problema también ocurría con `SlotNumber` dentro del
+`EquipmentContainer` pero en un slot no-runa (Head=0, Body=1, etc.), y con inventarios
+ampliados por mochila, donde el índice de un slot de inventario podía coincidir
+numéricamente con el rango 14–22 — confirmando que `SlotNumber` es relativo al `Container`
+que lo contiene, no un ID global.
 
 ### Fix aplicado
 En `UI_ItemSlot.OnDrop`, antes de evaluar `Does Container Match Tag Query`, se agregó:
-1. `Cast To BP_EquipmentComponent` sobre `GET Container` — descarta cualquier `Container` que
-   no sea el `EquipmentContainer` (nivel Container).
-2. `IsValidRuneDestination` — combinación `OR` de `SlotNumber == 7` y
-   `(SlotNumber >= 14 AND SlotNumber <= 22)` — descarta slots del `EquipmentContainer` que no
-   son de runa (nivel slot).
-3. Ambos combinados con `AND` junto a `Does Container Match Tag Query` antes de entrar al
-   flujo ÉXITO/FALLO.
+1. `Cast To BP_EquipmentComponent` sobre `GET Container`.
+2. `IsValidRuneDestination` — `OR` de `SlotNumber == 7` y `(SlotNumber >= 14 AND SlotNumber <= 22)`.
+3. Ambos combinados con `AND` junto a `Does Container Match Tag Query`.
 
-Documentación completa del fix: `04_BLUEPRINT_UI_ItemSlot.md`, sección OnDrop.
+**Estado: ✅ Resuelto en el origen.** Documentación completa: `04_BLUEPRINT_UI_ItemSlot.md`.
 
-**Estado: ✅ Resuelto en el origen** (el candado fantasma ya no se genera). Ver pendientes de
-hardening abajo para una capa de seguridad adicional dentro de `AddRuneToQueue` mismo.
+---
+
+## 🐞 Bug abierto — Runa soltada sobre slot de runa YA OCUPADO dispara cooldown y candado
+
+**Detectado:** sesión Orden de remoción de runas. **Estado: 🔴 Abierto — sin fix aplicado.**
+
+**Reproducción (confirmada por el usuario):** slot 1 con runa y velo, slot 2 con runa asignada,
+slot 3 disponible. Arrastrar una runa del inventario y soltarla sobre el slot 2 → se dispara el
+cooldown y aparece el candado (y su widget en `RuneQueueBox`), aunque la acción no tiene sentido.
+
+**Diagnóstico (inferencia a partir de lo documentado):** lógica de `OnDrop` en `UI_ItemSlot`.
+`IsValidRuneDestination` solo mira el número de slot, no si el slot ya tiene ítem. El slot 2
+no está bloqueado por `bRemovalLocked` (su siguiente, el 3, está vacío), así que entra al
+flujo ÉXITO/FALLO y llama `AddRuneToQueue` con `LockedSlot` válido (slot 3) — por eso no
+genera errores de `Accessed None`: el candado es "legítimo" pero la acción no debería haber
+ocurrido. `AddRuneToQueue` no se defiende (no valida nada, ver notas).
+
+**Fix propuesto (no implementado):** en `OnDrop`, rama `True` de "es runa Y slot destino
+válido", agregar un `Branch` con `NOT Item Is Valid(Get Item(Container, SlotNumber))`;
+`False` → `Return Node (True)` sin acción. Detalle paso a paso y decisión de diseño pendiente
+(rechazar vs reemplazar) en `04_BLUEPRINT_UI_ItemSlot.md`.
 
 ---
 
@@ -256,12 +261,12 @@ hardening abajo para una capa de seguridad adicional dentro de `AddRuneToQueue` 
   Los datos pendientes se guardan en variables de instancia antes de arrancar el timer.
 - El move de la runa ocurre en `OnDrop` (caso éxito), no en `OnRuneAssignComplete`.
   `OnRuneAssignComplete` solo desbloquea el slot y limpia el widget.
-- **✅ Nuevo (Fix candados fantasma):** `AddRuneToQueue` en sí **no valida** que `LockedSlot`
-  sea un valor válido antes de operar sobre él — la validación completa vive ahora únicamente
-  en el llamador (`UI_ItemSlot.OnDrop`). Esto es consistente con la prioridad de "modificación
-  mínima" del proyecto (el fix se aplicó en el punto exacto donde nace el problema, sin tocar
-  `AddRuneToQueue`), pero deja a esta función sin defensa propia contra futuros puntos de
-  entrada que pudieran pasar un `LockedSlot` inválido — ver pendiente de Hardening abajo.
+- `AddRuneToQueue` en sí **no valida** que `LockedSlot` sea válido ni que la acción tenga
+  sentido — toda la validación vive en el llamador (`UI_ItemSlot.OnDrop`). Consistente con la
+  prioridad de "modificación mínima", pero deja a esta función sin defensa propia ante futuros
+  puntos de entrada — ver pendiente de Hardening.
+- **Gates de bloqueo:** el cooldown usa `IsBlocked` (compartido con repair/use). El orden de
+  remoción usa `bRemovalLocked` (propio, ver `04`). `bIsLocked` es huérfana.
 
 ---
 
@@ -273,16 +278,15 @@ hardening abajo para una capa de seguridad adicional dentro de `AddRuneToQueue` 
 | AssignDuration hardcodeado a 5.0 | Debe hacerse configurable | ⏳ Pendiente |
 | Pin RuneIcon sin uso en AddRuneToQueue | Pendiente limpiar tras rediseño | ⏳ Pendiente |
 | Variables Pending* posiblemente sin uso | Evaluar si PendingTargetContainer/Slot/Source* siguen siendo necesarios | ⏳ Pendiente |
-| **Candados fantasma al soltar runa en slot no-runa** | Causa raíz: `OnDrop` no validaba el slot destino, solo el tag del ítem. Fix aplicado en `UI_ItemSlot.OnDrop` (Cast To BP_EquipmentComponent + IsValidRuneDestination). Ver sección dedicada arriba y `04_BLUEPRINT_UI_ItemSlot.md`. | ✅ **Resuelto en el origen** esta sesión |
-| **⏳ PENDIENTE 1 — Hardening opcional: `IsValid(LockedSlot)` en `AddRuneToQueue`** | No obligatorio para el bug reportado (el fix en `OnDrop` ya corta el problema de raíz). Se recomienda como capa de seguridad adicional: agregar `IsValid(LockedSlot)` al inicio de `AddRuneToQueue` y, si `Is Not Valid`, hacer `Return` antes de `SET PendingLockedSlot` / `Create Widget`. Esto evitaría candados huérfanos ante **cualquier** futuro punto de entrada a `AddRuneToQueue` que pase un `LockedSlot` inválido, sin depender de que el llamador siempre valide correctamente. | 🟡 Pendiente — no bloqueante, prioridad baja |
-| **⏳ PENDIENTE 2 — Verificar contradicción `Set IsBlocked` vs `Set bIsLocked` en `AddRuneToQueue`** | Ver nota dedicada en la sección "AddRuneToQueue — flujo implementado" arriba. El log de runtime nombra el nodo `Set IsBlocked`; la documentación describe `SET bIsLocked = True`. Requiere abrir el grafo real y confirmar cuál variable se está seteando — el log tiene prioridad sobre el .md hasta esa verificación. Si el nodo real es `IsBlocked`, corregir a `bIsLocked` (Compile + Save) ya que son gates distintos y no intercambiables (ver `04_BLUEPRINT_UI_ItemSlot.md`). | 🔴 Pendiente verificación en editor — prioridad alta, puede afectar sincronización visual del candado |
+| Candados fantasma al soltar runa en slot no-runa | Fix en `UI_ItemSlot.OnDrop` | ✅ Resuelto en el origen |
+| ⏳ Hardening opcional: `IsValid(LockedSlot)` en `AddRuneToQueue` | No obligatorio. Capa de seguridad: `IsValid(LockedSlot)` al inicio y `Return` si Is Not Valid | 🟡 Pendiente — baja prioridad |
+| ✅ Verificar `Set IsBlocked` vs `Set bIsLocked` en `AddRuneToQueue` | **Resuelto:** ambos nodos reales (`AddRuneToQueue` y `OnRuneAssignComplete`) usan `IsBlocked`. Documentación corregida | ✅ Cerrado esta sesión |
+| **Cooldown de runas depende de `IsBlocked` (frágil)** | `IsBlocked` también pertenece a repair/use del asset base. Evaluar migrar el cooldown a variable propia (posible reutilizar la huérfana `bIsLocked` o crear una nueva) y resolver junto con la variable huérfana | ⏳ **Nuevo** — pendiente, prioridad media |
+| **`bIsLocked` huérfana en `UI_ItemSlot`** | Sin Get ni Set. Borrar o reutilizar | ⏳ **Nuevo** |
+| **🐞 Runa sobre slot ocupado dispara cooldown/candado** | Ver sección dedicada. Fix propuesto en `OnDrop` | 🔴 **Nuevo — abierto** |
 
 ---
 
-*Archivo actualizado — sesión Light Paradox (Fix candados fantasma en Action/Crafting Queue)*
-*Cambios: documentado el síntoma completo, causa raíz y fix del bug de candados fantasma
-(resuelto en el origen, en UI_ItemSlot.OnDrop); registrados dos pendientes nuevos: (1) Hardening
-opcional — IsValid(LockedSlot) en AddRuneToQueue como capa de seguridad adicional, no bloqueante;
-(2) verificación de contradicción entre el log de runtime (Set IsBlocked) y la documentación
-existente (Set bIsLocked) — pendiente de confirmar en el editor cuál es el nodo real.*
+*Archivo actualizado — sesión Light Paradox (Orden de remoción de runas)*
+*Cambios: contradicción `IsBlocked`/`bIsLocked` resuelta (ambos nodos reales usan `IsBlocked`), flujos de `AddRuneToQueue` y `OnRuneAssignComplete` corregidos; interacción con `bRemovalLocked` documentada; deuda del cooldown frágil y variable huérfana registradas; bug nuevo de runa sobre slot ocupado registrado.*
 *Project: Light Paradox · Base: EasySurvivalRPGv5*
