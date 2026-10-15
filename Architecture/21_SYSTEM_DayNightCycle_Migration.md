@@ -2,7 +2,7 @@
 ### Base Asset: sistema Day/Night migrado de proyecto externo (UE 5.5.4)
 ### Proyecto: Light Paradox · UE 5.4.4
 ### Fuente: Migración manual + inspección directa + capturas de Details/Outliner + `Day_Night_Module.pdf` (vendor)
-### Actualizado: sesión Light Paradox — Calibración día/noche (Sunrise/Sunset, Sun Yaw, Start Time, SkyLight día/noche)
+### Actualizado: sesión Light Paradox — Calibración día/noche + `Day` por ciclo + calendario (Days Per Month / Months Per Year) + base de eventos cósmicos (ver `22_SYSTEM_LunarPhases_EclipseStates.md`)
 
 ---
 
@@ -20,10 +20,13 @@ Servirá como base para disparar eventos de ciclos lunares y tipos de eclipse
   por `Start Time`.
 - El juego arranca de día (`Start Time`).
 - La iluminación del `SkyLight` cambia de día a noche (intensidad y color).
+- `Day` ahora sube **una vez por ciclo** (cruce de `Time` 24 → 0), confirmado
+  por el usuario en juego. Se agregó un calendario (`Days Per Month`,
+  `Months Per Year`) usado por el sistema de eventos cósmicos.
 - Pendientes principales: interpolar iluminación con `Time` (salto instantáneo
-  actual), mover el incremento de `Day` fuera del tick por frame (necesario
-  para el DataTable de ciclos lunares), verificar efecto de `Moon.Temperature`,
-  optimización, y problemas visuales heredados menores.
+  actual), verificar efecto de `Moon.Temperature`, eventos cósmicos que cruzan
+  medianoche y prioridad de eclipses (ver `22`), optimización, y problemas
+  visuales heredados menores.
 
 ---
 
@@ -199,16 +202,20 @@ sesión). Si de noche aún se ve luz solar, revisar.
 | `DayNightCycle_Timeline` | Timeline | Creado vía My Blueprint → Timelines. |
 | `Total Day Night Time` | Float | `1.0` (confirmado por captura y PDF). |
 | `Time` | Float | Salida del Float Track `Time`. En instancia: `0.0`. |
-| `Day` | Integer (inferido) | Captura muestra `1` sin decimales (vs `1.0` en Float). Confirmar en panel Variables. |
+| `Day` | Integer (inferido) | Captura muestra `1` sin decimales (vs `1.0` en Float). Contador corrido (1, 2, 3...), sin fin. Sube una vez por ciclo vía `Update Data`. Instance Editable (se puede fijar a mano para probar). |
+| `Previous Time` | Float | **Nueva.** Default `0.0`. No Instance Editable. Valor de `Time` en la llamada anterior de `Update Data`; sirve para detectar el reinicio del loop. |
+| `Days Per Month` | Integer | **Nueva.** Instance Editable. Default `30`. Para el sistema de eventos cósmicos (`22`). |
+| `Months Per Year` | Integer | **Nueva.** Instance Editable. Default `12`. |
+| `Active Celestial Events` | Array de Name | **Nueva.** No Instance Editable. Filas de `DT_CelestialEvents` actualmente activas. Variable real (no salida de función pura), por la lección del Bug 3 de `20_SYSTEM_States.md`. |
 | `Sunrise Time` | Float | **`6.0`** (Instance Editable). |
 | `Sunset Time` | Float | **`18.0`** (Instance Editable). |
 | `Start Time` | Float | **Nueva.** Instance Editable. Default `8.0`. Hora a la que arranca el Timeline. |
 | `Night Only Items` | Array de `BP_Item_NightOnly` | Instance Editable. **3 elementos** en la instancia (`BP_Item_NightOnly`, `_2`, `_3`). Ver `23_SYSTEM_ItemSpawner_Investigacion.md`. |
 | `All Lights in Level` | Array | Llenado en BeginPlay vía `Get All Actors with Interface (BPI_IsLight)`. |
-| `SkyLight Intensity Day` | Float | **Nueva.** Instance Editable. Default `0.3`. |
-| `SkyLight Intensity Night` | Float | **Nueva.** Instance Editable. Default `0.1` (rango de prueba `0.05`–`0.15`). |
-| `SkyLight Color Day` | Linear Color | **Nueva.** Instance Editable. Default blanco (`FFFFFF`). |
-| `SkyLight Color Night` | Linear Color | **Nueva.** Instance Editable. Punto de partida `7090FF` (azul frío), ajustado a ojo por el usuario — valor final no documentado. |
+| `Sky Light Intensity Day` | Float | **Nueva.** Instance Editable. `0.3` (confirmado en captura de instancia). |
+| `Sky Light Intensity NIght` | Float | **Nueva.** Instance Editable. `0.1` en captura (rango de prueba `0.05`–`0.15`). **Nota:** el nombre real tiene la `I` mayúscula (`NIght`); es un typo de la variable, sin efecto funcional. |
+| `Sky Light Color Day` | Linear Color | **Nueva.** Instance Editable. Blanco (`FFFFFF`). |
+| `Sky Light Color Night` | Linear Color | **Nueva.** Instance Editable. En captura se ve azul/lavanda claro; hex exacto no documentado. |
 
 > Los defaults indicados son los sugeridos al crear las variables. El usuario
 > pudo ajustarlos después; valores finales pendientes de re-captura.
@@ -222,7 +229,7 @@ sesión). Si de noche aún se ve luz solar, revisar.
 | Track | Tipo | Keyframes |
 |---|---|---|
 | `Time` | Float Track | (0, 0) y (24, 24). Lineal. |
-| `DayEnded` | Float Track | 1 keyframe: (0, 0). Sin uso. **Es Float Track, no Event Track: su pin es un valor, no un pin de ejecución.** |
+| `DayEnded` | Event Track (confirmado por captura: su pin es de ejecución, blanco) | Keyframe en `Time = 0` (inferido; no re-inspeccionado). **Corrección:** versiones anteriores de este .md lo documentaban como Float Track. La captura de esta sesión muestra un pin Exec. **Sin uso actual:** `Update Data` ya no depende de este pin (ver EventGraph). |
 | `Sun Yaw` | Float Track | ✅ **Recalibrado esta sesión:** (0, **90**) y (24, **450**), interpolación **Linear** en ambos. |
 
 ### Calibración de `Sun Yaw` (esta sesión)
@@ -257,10 +264,11 @@ Event BeginPlay
       Then 1 → Set Timer by Event (Event: CheckLight, Time: Total Day Night Time, Looping: true)
 
 DayNightCycle_Timeline (pines: Time, Day Ended, Sun Yaw)
-  Update    → Update Data (Target: self)          ← incrementa Day cada frame (pendiente corregir)
-  Time      → SET Time
-  Sun Yaw   → Make Rotator (Y=Pitch) → Set World Rotation (Target: Directional Light)
-  Day Ended → sin conexión (Float Track, no es exec)
+  Update    → Sequence                                   ← CAMBIADO esta sesión
+                Then 0 → SET Time (Time del Timeline) → Set World Rotation (Target: Directional Light)
+                Then 1 → Update Data (Target: self)
+  Sun Yaw   → Make Rotator (Y=Pitch) → New Rotation de Set World Rotation
+  Day Ended → sin conexión (ya no llama Update Data)
 
 CheckLight (Custom Event)
   → Sequence
@@ -272,6 +280,7 @@ CheckLight (Custom Event)
       Then 2 → For Each Loop (Night Only Items) → Set Night Visible (bVisible ← NOT)
                  (ver 23_SYSTEM_ItemSpawner_Investigacion.md)
       Then 3 → ✅ NUEVO esta sesión — iluminación del SkyLight (abajo)
+      Then 4 → ✅ NUEVO esta sesión — CheckCelestialEvents (Target: self). Ver `22_SYSTEM_LunarPhases_EclipseStates.md`
 ```
 
 > **Convención:** el booleano `NOT(In Range(Time, Sunrise Time, Sunset Time))`
@@ -297,13 +306,28 @@ noche se veía casi de día; con `0.1` fijo el día perdía luz y las sombras se
 endurecían (observación del usuario). Con este cambio cada valor se aplica
 solo en su momento.
 
-### Update Data (interior confirmado)
+### Update Data (interior — ✅ modificado y confirmado en juego esta sesión)
 ```
-Entry (Update Data) → Get Day → Add (Day, 1) → SET Day
+Entry (Update Data)
+  → Branch (Condition ← Time < Previous Time)
+      True  → SET Day ← (Day + 1) → SET Previous Time ← Time
+      False → SET Previous Time ← Time
 ```
-Disparado por `Update` del Timeline: incrementa `Day` **cada frame**, no una
-vez por ciclo. Ver pendiente "Day por frame" — necesario para el DataTable de
-ciclos lunares/eclipses.
+`Time` solo baja cuando el Timeline vuelve de 24 a 0, así que `Day` sube una
+vez por ciclo. Confirmado por el usuario: `Day` pasa de 1 a 2 al cruzar 24.
+
+> **Corrección importante sobre el .md anterior:** este archivo decía que
+> `Update Data` colgaba del pin `Update` del Timeline y que incrementaba
+> `Day` cada frame. La captura de esta sesión mostró que estaba conectado al
+> pin `Day Ended` (Event Track), que no se disparaba al arrancar con
+> `Set New Time` / reinicio de loop (inferencia). Esa era la razón de que
+> `Day` no subiera. La nota "Day por frame" y el candidato de optimización
+> "`Update Data` por frame" **se anulan**. Fix: llamar `Update Data` desde
+> `Update` vía `Sequence → Then 1`, con la comparación `Time < Previous Time`
+> dentro de la función.
+
+> **Orden de ejecución:** `Then 0` (SET Time) corre completo antes de
+> `Then 1` (Update Data), así `Update Data` ya ve el `Time` actualizado.
 
 ---
 
@@ -316,6 +340,7 @@ ciclos lunares/eclipses.
 | 3 | Sin cielo ni luz en PIE (`Hidden In Game` activo en `BP_DayNight`) | ✅ Resuelto |
 | 4 | Ciclo corría sin resultado visual (`Sun Yaw` sin keyframes) | ✅ Resuelto — curva ahora calibrada (ver arriba) |
 | 5 | Incógnita: el original funciona pese a `Sun Yaw` vacío | 🟣 Sin resolver, no bloqueante |
+| 10 | `Day` no subía al cruzar 24 (`Update Data` conectado a `Day Ended`, que no se disparaba) | ✅ **Resuelto esta sesión** — `Update` → `Sequence` → `Then 1` → `Update Data` con `Branch (Time < Previous Time)` |
 | 6 | Poison "permanente" / luces siempre de noche (`Sunrise`/`Sunset` en `0.0` sin Instance Editable) | ✅ Resuelto — variables expuestas |
 | 7 | Desincronización lógica día/noche vs curva visual `Sun Yaw` | ✅ **Resuelto esta sesión** — `Sunrise 6` / `Sunset 18` + `Sun Yaw` 90→450 Linear |
 | 8 | Juego arrancaba de noche | ✅ **Resuelto esta sesión** — causas: `Sunrise 12`/`Sunset 24` temporales (workaround visual) + Timeline siempre arrancando en `Time = 0`. Fix: valores `6`/`18` + variable `Start Time` + `Set New Time` antes de `Play` |
@@ -363,7 +388,7 @@ migración.
 El cliente reportó caída de framerate con el ciclo activo. **No verificado
 por el equipo.** Candidatos (sin confirmar):
 - `VolumetricCloud` (costoso históricamente).
-- `Update Data` por frame (el incremento es trivial, pero hay lógica por frame).
+- ~~`Update Data` por frame~~ — descartado: ya se llama por frame desde `Update` (Then 1), pero solo hace una comparación `Time < Previous Time`; costo despreciable. El incremento de `Day` ocurre una vez por ciclo.
 - `CheckLight` cada `Total Day Night Time` segundos: ahora ejecuta además
   Poison, `Night Only Items` y `Set Intensity`/`Set Light Color` del
   `SkyLight`. Con muchas luces, `For Each Loop (All Lights in Level)` suma costo.
@@ -391,7 +416,8 @@ lunares). Pendiente confirmar si existe en el Level Blueprint de Light Paradox.
 | Problema | Notas | Estado |
 |---|---|---|
 | **Interpolar iluminación con `Time`** | **Nota pendiente solicitada esta sesión.** Hoy `SkyLight` (intensidad y color) cambia de golpe en `Time = 6` y `Time = 18` porque `Then 3` corre en el timer de `CheckLight`. Mejora propuesta: interpolar con `Time` (por ejemplo `Lerp` con alpha derivada de `Time` y una ventana alrededor de 6 y 18, o curvas Float/Color dentro del Timeline) para amanecer/atardecer graduales. Considerar también el flash del primer disparo de `CheckLight`: si algún día se arranca de noche, el `SkyLight` usa su valor de clase (`0.3`) hasta el primer tick del timer. | 🟡 Pendiente — mejora visual, no bloqueante |
-| **`Day` se incrementa cada frame** | `Update Data` se conecta al pin `Update` del Timeline. Bloquea el "cada cuántos días" del DataTable de ciclos lunares/eclipses. **Corrección a una sugerencia previa:** el pin `Day Ended` no sirve, porque `DayEnded` es Float Track (sin pin de ejecución). Propuesta: detectar el reinicio del loop (`Time` actual < `Previous Time`) y llamar `Update Data` solo entonces. Ver siguiente paso. | 🔴 Pendiente — siguiente tarea |
+| ~~`Day` se incrementa cada frame~~ | ✅ **Resuelto esta sesión.** Ver Bug 10 y sección Update Data. | ✅ Resuelto |
+| `Total Day Night Time` y duración real del ciclo | El .md indica ~24 s reales por ciclo con `Total Day Night Time = 1`; no está medido. `CheckLight` (y por tanto `CheckCelestialEvents`) corre en un timer con ese intervalo; entradas/salidas de eventos pueden retrasarse hasta un tick. Medir antes de cambiar `Total Day Night Time`. | ⏳ Pendiente medir |
 | **Verificar `Moon.Temperature`** | El usuario nota que cambiar la temperatura de `Moon` casi no afecta la mesh del personaje; mover `Light Color` del `SkyLight` sí. Inferencia (no confirmada): `Moon` tiene `Intensity 0.26 lux`, muy tenue, así que su tinte casi no se ve; el `SkyLight` aporta más luz ambiente. Prueba: subir `Moon.Intensity` temporalmente a `2.0`; si el tinte azul aparece, no hay error. | 🟡 Pendiente de verificar |
 | Valores finales de `Moon` y `SkyLight` Night | Capturas anteriores a los ajustes del usuario. Re-capturar Details y actualizar tablas. | ⏳ Pendiente documentar |
 | Intensity del `DirectionalLight` (2.75 lux) sin revisar | Verificar que de noche no aporte luz | ⏳ Pendiente |
@@ -410,7 +436,7 @@ lunares). Pendiente confirmar si existe en el Level Blueprint de Light Paradox.
 
 ## Checklist de pendientes — próxima sesión (orden sugerido)
 
-1. 🔴 Mover el incremento de `Day` fuera del tick por frame (detección de reinicio de loop) y crear el DataTable de ciclos lunares/eclipses con debug log (`STR_CelestialEvent`, `DT_CelestialEvents`).
+1. ✅ `Day` por ciclo — hecho. ✅ DataTable de eventos cósmicos con debug log — hecho (v1). Continuar en `22_SYSTEM_LunarPhases_EclipseStates.md`: eventos que cruzan medianoche y prioridad de eclipses sobre lunas.
 2. 🟡 Interpolar iluminación del `SkyLight` con `Time` (ver deuda técnica).
 3. 🟡 Verificar `Moon.Temperature` (prueba con `Intensity 2.0`).
 4. ⏳ Re-capturar Details de `Moon`/`SkyLight`/variables `SkyLight ... Night` y actualizar este archivo.
@@ -423,6 +449,7 @@ lunares). Pendiente confirmar si existe en el Level Blueprint de Light Paradox.
 
 ---
 
-*Archivo actualizado — sesión Light Paradox (calibración día/noche).*
+*Archivo actualizado — sesión Light Paradox (calibración día/noche + `Day` por ciclo + calendario + `Then 4`).*
+*Cambios de la sesión de eventos cósmicos: `Update Data` movido de `Day Ended` a `Update` (Sequence Then 1) con `Branch (Time < Previous Time)`; `Day Ended` corregido a Event Track; variables `Previous Time`, `Days Per Month`, `Months Per Year`, `Active Celestial Events`; `Then 4` en `CheckLight`; typo `Sky Light Intensity NIght` anotado; Bug 10 resuelto; se anulan las notas de `Day` por frame.*
 *Cambios: nombre `BP_DayNight` confirmado; `Sunrise/Sunset` = 6/18 con historial del workaround 12/24; `Sun Yaw` recalibrado (90→450, Linear) y tabla de verificación confirmada; variable `Start Time` + `Set New Time` en BeginPlay (juego arranca de día); `CheckLight` Sequence documentado completo con `Then 3` (SkyLight Intensity y Color día/noche) y variables nuevas; valores de Details de `Moon` y `SkyLight`; `Night Only Items` con 3 instancias; bugs 6–9 resueltos; pendientes nuevos: interpolación con `Time`, verificar `Moon.Temperature`, `Day` por frame (con corrección sobre el pin `Day Ended`), costo de `Real Time Capture`.*
 *Project: Light Paradox · Base: EasySurvivalRPGv5 (Day/Night migrado de UE 5.5.4) · UE 5.4.4*

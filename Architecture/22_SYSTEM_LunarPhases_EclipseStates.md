@@ -1,275 +1,275 @@
 # 22 — Sistema: Fases Lunares y Eclipses vinculadas a Estados
-### Sistema: Correlación Ciclo Día/Noche → Estados (integración con sistema de States)
+### Sistema: Correlación Ciclo Día/Noche → Eventos cósmicos → Estados (integración con sistema de States)
 ### Base Asset: EasySurvivalRPGv5 (Day/Night Module) + sistema propio de States (Light Paradox)
-### Fuente: Diseño del cliente + documento original del programador (`Day_Night_Module.pdf`) — sesión Light Paradox
+### Fuente: Diseño del cliente + documento original del programador (`Day_Night_Module.pdf`) + implementación en sesión Light Paradox
 ### Proyecto: Light Paradox · UE 5.4.4
+### Actualizado: sesión Light Paradox — DataTable `DT_CelestialEvents` v1 (calendario por mes/día + hora, debug log)
 
 ---
 
 ## Contexto
 
-`BP_DayNight` (ver `21_SYSTEM_DayNightCycle_Migration.md`) ya produce un
-ciclo día/noche funcional a nivel visual. Objetivo de esta sesión: conectar
-las fases del ciclo (fases lunares, fases de eclipse) al sistema de Estados
-ya existente (ver `20_SYSTEM_States.md`) para que ciertos eventos de
+`BP_DayNight` (ver `21_SYSTEM_DayNightCycle_Migration.md`) produce un ciclo
+día/noche funcional y calibrado. Objetivo: conectar fases lunares y eclipses
+al sistema de Estados (`20_SYSTEM_States.md`) para que ciertos eventos de
 gameplay ocurran **exclusivamente** mientras una fase específica está en
 curso.
 
-**Nada de este sistema está implementado todavía.** Este archivo documenta
-el diseño, las preguntas abiertas, y el plan de prueba de concepto usando
-`State_Poison` como Estado de testing.
+**Estado actual (esta sesión):**
+- ✅ Prueba de concepto Poison de noche (resuelta, ver sección más abajo).
+- ✅ **Nuevo:** `DT_CelestialEvents` v1 implementado. Detecta eventos por
+  **hora + día del mes + mes** e imprime ENTER/EXIT en el debug log. Sin
+  efecto visual y sin Estados todavía (decisión del usuario para esta fase).
+- 🔴 Pendientes de esta fase: eventos que cruzan medianoche, prioridad de
+  eclipses sobre lunas, aplicar Estados y alimentar el visual (`MoonPhase`,
+  `Eclipse Phase`). Ver "Pendientes para la siguiente sesión".
 
 ---
 
 ## Diseño objetivo (confirmado por el cliente)
 
-- Deben existir fases lunares vinculadas a eventos de gameplay.
-- Deben existir fases de eclipse (solar y/o lunar) vinculadas a eventos de
-  gameplay.
-- Cada fase debe estar vinculada a un Estado (ver `20_SYSTEM_States.md`,
-  `DT_States` / `BP_StateApplier`) que se aplica **solo** mientras esa fase
-  está en curso, y se remueve cuando la fase termina.
-- Confirmado por el documento original del programador (paráfrasis, no
-  cita textual): los efectos lunares deben afectar tanto al jugador como a
-  los enemigos, de forma independiente de la personalización del
-  personaje. Esto sugiere que el trigger de fase debe aplicarse a
-  cualquier actor con `BPI_Character`/`AbilitySystemComponent`, no
-  únicamente al jugador — mismo patrón ya usado por
-  `BP_StatusEffect_TickDamage`/`BP_AbilitySystem`, que no distingue entre
-  jugador y NPC.
+- Fases lunares vinculadas a eventos de gameplay.
+- Fases de eclipse (solar y/o lunar) vinculadas a eventos de gameplay.
+- Cada fase se vincula a un Estado (`DT_States` / `BP_StateApplier`) que se
+  aplica **solo** mientras esa fase está en curso y se remueve al terminar.
+- Los efectos lunares afectan a jugador y enemigos por igual (paráfrasis del
+  PDF original), por lo que el trigger no debe limitarse al jugador. Pendiente
+  de implementar (ver pendientes).
+
+### Reglas del calendario dadas por el cliente (esta sesión)
+
+Con un calendario lunar de referencia (julio 2020: luna llena el día 5,
+luna nueva el día 20, cuartos el 13 y el 27):
+
+- Todos los meses tienen el mismo ciclo lunar, así que las lunas se definen
+  **solo por día del mes**, ignorando el mes.
+- Eclipses lunares ocurren en luna llena; eclipses solares en luna nueva.
+- 4 eclipses al año (2 lunares y 2 solares), alternados, cada 3 meses.
+  Ejemplo del cliente: mes 3 solo eclipse lunar; mes 6 solo eclipse solar.
+- Un evento de eclipse **reemplaza** a la luna de ese día.
+
+> **⚠️ Contradicción en el brief del cliente (pendiente confirmar):** dijo
+> "cada sexta luna llena es un eclipse solar y cada sexta luna nueva es un
+> eclipse lunar", pero también que lunares van en luna llena y solares en
+> luna nueva. Se siguió lo segundo y los ejemplos (mes 3 día 5 = eclipse
+> lunar; mes 6 día 20 = eclipse solar). Meses sugeridos: lunares 3 y 9;
+> solares 6 y 12. **Inferencia mía, no confirmada.**
 
 ---
 
-## Pregunta abierta — número real de fases (sin resolver, marcado como inferencia)
+## ✅ Implementación v1 — `DT_CelestialEvents` (esta sesión)
 
-Del PDF original (ver también tablas completas en
-`21_SYSTEM_DayNightCycle_Migration.md`):
+**Estado:** implementado; el usuario confirmó que funciona ("parece que está
+todo bien"). Los resultados detallados de las pruebas A/B de la tabla de más
+abajo no fueron reportados fila por fila — validar con la prueba de `Day` fija
+cuando se retome.
 
-**Fases lunares:**
-La tabla "Moon Phases" del PDF muestra 3 ejemplos de valores del parámetro
-`MoonPhase` (0.5 / 0.72 / 0.088) junto con capturas de distintas formas de
-luna (llena, creciente, gibosa). **No queda claro** si el sistema original
-define exactamente 3 fases discretas usando esos valores como umbrales, o
-si `MoonPhase` es simplemente un valor continuo (Scalar Parameter, rango
-0.0–1.0) y esos 3 ejemplos son solo puntos ilustrativos dentro de un rango
-continuo que recorre las fases reales de la luna (nueva → creciente →
-llena → menguante → nueva).
+### Diseño — cambio respecto a la propuesta inicial
 
-**Fases de eclipse:**
-La tabla "Eclipse Parameters" del PDF muestra 3 ejemplos de
-`EclipsePhase` (0.5 / 0.25 / 0.01) — pero a diferencia de la tabla de
-Moon Phase, aquí también varía `SunScale` entre ejemplos (0.5 → 0.2 → 0.2).
-Esto sugiere que estos 3 ejemplos pudieron ser ajustados manualmente caso
-por caso para las capturas de pantalla, no que representen "3 fases"
-predefinidas del sistema como tal.
+La propuesta inicial usaba `IntervalDays` y `DayOffset`. El usuario las
+cambió por `EventMonths` y `EventDays` por ser más intuitivas para diseño
+(se escribe el día exacto, no una aritmética). `StartHour`/`EndHour` se
+conservan.
 
-**Conclusión provisional (marcada explícitamente como inferencia, NO
-confirmada):** dado que tanto `MoonPhase` como `EclipsePhase` son
-`Scalar Parameter Value` (Float 0.0–1.0) dentro de un Material Instance,
-es más probable que ambos sean valores continuos controlados a lo largo
-del ciclo — no un enum nativo de fases discretas en Unreal. Sin embargo,
-el sistema de Estados (`DT_States`) necesita de todas formas trabajar con
-rangos/umbrales discretos para poder decidir cuándo aplicar y remover un
-Estado (ej. "Luna Llena" = `MoonPhase` entre 0.45–0.55). **Esta decisión de
-diseño (cuántas fases discretas, y qué rango de valor corresponde a cada
-una) no está tomada — debe definirse y aprobarse durante el testing de
-esta sesión, empezando por el caso de prueba con `State_Poison`.**
+Para esto `Day` (contador corrido) se convierte a mes y día del mes con
+`Days Per Month` y `Months Per Year` (variables de `BP_DayNight`, ver `21`).
 
----
+### Assets (en `Content/LightParadox/Blueprints/DayNightCycle`)
 
-## Plan de prueba de concepto — vincular `State_Poison` a una fase
+**Enum `E_CelestialEventType`:** `MoonPhase`, `SolarEclipse`, `LunarEclipse`.
 
-Objetivo de esta sesión: validar el mecanismo completo de principio a fin
-con un solo Estado ya existente y funcional (`State_Poison`, ver
-`20_SYSTEM_States.md`), antes de decidir el diseño final de todas las
-fases.
+**Struct `STR_CelestialEvent` (Row Struct):**
 
-### Piezas ya existentes que se reutilizan (sin modificar)
-- `DT_States` → fila `State_Poison` (`Effects: [Effect_Poison]`,
-  `Rate: 100`, `Duration: 10.0`, `EffectsDurationOverride: True`).
-- `BP_StateApplier.ApplyState` — ya tiene guard anti-duplicado
-  (`Check Status Effect By Handle`) integrado, confirmado funcional en
-  `20_SYSTEM_States.md`. Esto es importante: **no es necesario** construir
-  un guard nuevo para evitar reaplicar el Estado en cada Tick mientras la
-  fase está activa — `ApplyState` ya lo maneja.
-- `Remove Status Effect By Handle` — patrón ya usado en Bloque A de
-  `EquipmentChanged` (`20_SYSTEM_States.md`) para remover Estados por
-  Handle.
+| Campo | Tipo | Notas |
+|---|---|---|
+| `EventType` | `E_CelestialEventType` | Tipo de evento |
+| `StartHour` | Float | Hora de inicio (0–24) |
+| `EndHour` | Float | Hora de fin (0–24). **v1: debe ser mayor que `StartHour` (no cruza medianoche)** |
+| `EventMonths` | Array de Integer | Meses en que ocurre. **Vacío o que contenga `0` = todos los meses** |
+| `EventDays` | Array de Integer | Días del mes en que ocurre. **Vacío o que contenga `0` = todos los días** |
 
-### Pieza nueva a construir — detección de fase y trigger
+**DataTable `DT_CelestialEvents`** — filas de prueba (3 requeridas, 1 opcional):
 
-**Pendiente de inspección antes de construir nada (acción inmediata de
-esta sesión):**
+| Row Name | EventType | StartHour | EndHour | EventMonths | EventDays |
+|---|---|---|---|---|---|
+| `Moon_Gibbous` | MoonPhase | 18 | 24 | (vacío) | 1, 2, 3, 4 |
+| `Moon_Full` | MoonPhase | 18 | 24 | (vacío) | 5 |
+| `Eclipse_Lunar` | LunarEclipse | 18 | 24 | 3, 9 | 5 |
+| `Eclipse_Solar` (opcional) | SolarEclipse | 18 | 24 | 6, 12 | 20 |
 
-1. Confirmar si `BP_DayNight` (o `BP_DayNightCycle`, ver discrepancia de
-   nombre en `21_SYSTEM_DayNightCycle_Migration.md`) expone `MoonPhase`
-   y/o `EclipsePhase` como **variables de Blueprint**, o si esos valores
-   viven **únicamente** como parámetros de `MI_SkySpherePhases`
-   (Material Instance) sin ninguna variable equivalente accesible desde
-   Blueprint. Esto es crítico: si el valor solo existe en el Material
-   Instance, se necesita un nodo `Get Scalar Parameter Value` sobre la
-   referencia al Material Instance (o sobre el `MPC` si en algún momento
-   se migra a un Material Parameter Collection) para poder leerlo desde
-   lógica de Blueprint.
-2. Si no existe ninguna variable ni forma de leer el valor desde
-   Blueprint, la alternativa es que `BP_DayNight` calcule su propio
-   "MoonPhase lógico" en paralelo (ej. una función que derive la fase a
-   partir de `Time`/`Day`), duplicando el criterio que ya usa el shader.
-   Esto es menos elegante (dos fuentes de verdad para lo mismo) pero puede
-   ser necesario si el material no expone el dato de vuelta.
+> **Nota:** `EndHour = 24` es visualmente incorrecto (la luna se mete a las 6).
+> Es una limitación de la v1; ver pendiente "eventos que cruzan medianoche".
+> Un `EndHour = 6` hace que el evento **deje de funcionar** (comprobado por el
+> usuario) porque `In Range` con `Min > Max` nunca es verdadero.
 
-### Mecanismo de detección propuesto (a validar esta sesión)
+### Variables en `BP_DayNight` (ver `21` para la tabla completa)
 
-Opción recomendada por prioridad de mínimo cambio (ver reglas del
-proyecto — preferir ajustes sobre reestructuras):
+`Days Per Month` (Integer, 30), `Months Per Year` (Integer, 12),
+`Active Celestial Events` (Array de Name, variable real).
+
+### Función `CheckCelestialEvents` (BP_DayNight, sin inputs)
+
+Variables locales: `LocalDayOfMonth` (Integer), `LocalMonth` (Integer).
 
 ```
-[BP_DayNight — dentro del mismo lugar donde ya se actualiza Time cada frame,
- o en CheckLight si se prefiere evitar lógica extra por Tick]
-
-  → GET MoonPhase actual (variable propia o leído del Material Instance)
-  → In Range (Float): MoonPhase, Min, Max   ← rango de la fase objetivo (ej. Luna Llena)
-  → Branch
-      True  → [fase activa]
-      False → [fase inactiva]
+Entry
+  → SET LocalDayOfMonth ← ((Day - 1) % Max(Days Per Month, 1)) + 1
+  → SET LocalMonth      ← (((Day - 1) / Max(Days Per Month, 1)) % Max(Months Per Year, 1)) + 1
+  → For Each Loop (Array: Get Data Table Row Names(DT_CelestialEvents))
+      Loop Body → Get Data Table Row (DT_CelestialEvents, Row Name: Array Element)
+        Row Found → Break STR_CelestialEvent
+          HourMatch  = In Range (Time, StartHour, EndHour)   [Inclusive Min = true, Inclusive Max = false]
+          MonthMatch = OR( Length(EventMonths) == 0,
+                           Contains(EventMonths, 0),
+                           Contains(EventMonths, LocalMonth) )
+          DayMatch   = OR( Length(EventDays) == 0,
+                           Contains(EventDays, 0),
+                           Contains(EventDays, LocalDayOfMonth) )
+          IsActive      = AND(HourMatch, MonthMatch, DayMatch)
+          AlreadyActive = Contains(Active Celestial Events, Array Element)
+          Branch (IsActive)
+            True  → Branch (NOT AlreadyActive)
+                      True → ADD Active Celestial Events ← Array Element
+                           → Print String "[Celestial] ENTER: <row> | Month <m> Day <d> | Time <t>" (verde)
+            False → Branch (AlreadyActive)
+                      True → Remove Item Active Celestial Events ← Array Element
+                           → Print String "[Celestial] EXIT: <row> | Month ... " (rojo)
 ```
 
-Para conectar esto al sistema de Estados sin duplicar aplicaciones cada
-frame, se recomienda:
+**Llamada:** `CheckLight` → `Sequence` → `Then 4` → `CheckCelestialEvents`
+(Target: self). Corre en el timer de `CheckLight`, igual que Poison, luces y
+`Night Only Items`. No se creó un timer nuevo.
 
-1. Guardar el resultado del `Branch` (fase activa / inactiva) en una
-   variable booleana de instancia en `BP_DayNight`, ej.
-   `bMoonPhase_Full_Active`.
-2. Solo llamar a `ApplyState`/`Remove Status Effect By Handle` en el
-   **cambio de estado** de esa variable (usar `SET w/ Notify` o comparar
-   contra el valor anterior antes de escribir), no en cada Tick — esto
-   evita spam de llamadas incluso aunque `ApplyState` ya tenga guard
-   propio, y evita tener que remover/reaplicar el Estado en cada frame
-   mientras la fase sigue activa.
-3. `ApplyState` necesita un `Target` — para cumplir el requisito de
-   "afecta a jugador y enemigos por igual", el trigger no puede limitarse
-   a `Get Player Character`. Pendiente decidir: iterar sobre todos los
-   actores con `BPI_Character` (patrón similar a
-   `Get All Actors with Interface` ya usado en `BP_DayNight` para
-   `BPI_IsLight`), o usar algún Subsystem/Manager central. **No
-   implementado — decisión pendiente de esta sesión.**
+> **Lección (repetida del Bug 3 de `20_SYSTEM_States.md`):** `Active Celestial
+> Events` debe ser una variable real; `Contains`/`Add`/`Remove` sobre una
+> salida de función pura reevalúan desde cero y producen ENTER repetido.
 
-### Prueba de concepto concreta — pasos sugeridos
+> **Error de instrucción corregido durante la sesión:** en los pines de
+> `Append` hay que **conectar** `GET Time`, `GET Day`, etc. Escribir esas
+> palabras en el pin imprime el texto literal.
 
-1. Elegir un rango de prueba para `MoonPhase` que represente "Luna Llena"
-   (ej. 0.45–0.55, ajustable).
-2. En `BP_DayNight`, agregar la lectura de `MoonPhase` y el `In Range`
-   descrito arriba.
-3. En el cambio a `True`, llamar `ApplyState(State_Poison, Target: <actor
-   de prueba>)`.
-4. En el cambio a `False`, remover el Effect Handle correspondiente
-   (guardado al aplicar) vía `Remove Status Effect By Handle`.
-5. Verificar en juego: el jugador (o actor de prueba) recibe el efecto de
-   veneno únicamente mientras `MoonPhase` está dentro del rango elegido, y
-   deja de recibirlo (y el efecto activo se remueve, no solo deja de
-   reaplicarse) al salir del rango.
-6. Confirmar que reentrar al rango en un ciclo posterior vuelve a aplicar
-   el Estado correctamente (sin quedar "atascado" en `bMoonPhase_Full_Active
-   = True` de un ciclo anterior).
+### Pruebas sugeridas (con `Day` fijo en la instancia — Day es Instance Editable)
+
+| Prueba | Setup | Esperado |
+|---|---|---|
+| A — eclipse mes 3 | `Day = 64` (mes 3, día 4), `Start Time = 17` | Día 64 ~18: ENTER `Moon_Gibbous`; día 65 ~0: EXIT; día 65 ~18: ENTER `Moon_Full` **y** `Eclipse_Lunar` (dos eventos a la vez: pendiente de prioridad); día 66 ~0: EXIT ambos |
+| B — filtro de meses | `Day = 4` (mes 1, día 4), `Start Time = 17` | Al pasar al día 5: ENTER `Moon_Full`, **sin** `Eclipse_Lunar` |
+
+### Limitaciones conocidas de la v1
+
+- No soporta eventos que cruzan medianoche (`StartHour > EndHour`).
+- Dos eventos pueden estar activos a la vez (eclipse + luna). Sin prioridad.
+- Granularidad: corre en el timer de `CheckLight`; entradas/salidas pueden
+  retrasarse hasta un tick. Duración real del ciclo no medida.
+- Solo imprime log; no aplica Estados ni cambia visual.
+- No hay validación de datos (por ejemplo `EventDays` con valores fuera de
+  1–`Days Per Month`).
 
 ---
 
-## Sesión de implementación — Prueba de concepto simplificada (Poison de noche)
+## Pendientes para la siguiente sesión (correcciones pedidas por el usuario)
 
-**Decisión de scope tomada esta sesión:** en vez de esperar a definir fases
-lunares/eclipse, se redujo el alcance a lo mínimo posible para validar el
-mecanismo completo: aplicar `State_Poison` mientras es de noche (usando el
-booleano "es de noche" que `BP_DayNight` ya calcula en `CheckLight`), sin
-tocar `MoonPhase`/`EclipsePhase` todavía. Esto reemplaza, para el caso de
-prueba, al enfoque inicial de un actor `BP_StateTrigger` independiente en
-el nivel (overlap-based) — se descartó esa ruta a favor de reusar
-`CheckLight`, que ya corre en timer y ya tiene el booleano de noche
-calculado, evitando duplicar lógica de detección día/noche en dos lugares
-distintos del proyecto.
+### 1. Eventos que cruzan medianoche (`EndHour` a las 6)
 
-### Wiring implementado en `BP_DayNight` — confirmado correcto por captura
+**Causa:** `In Range (Time, 18, 6)` tiene `Min > Max`, nunca es verdadero.
+
+**Propuesta (inferencia, sin probar):**
+1. Si `StartHour <= EndHour`: igual que hoy.
+2. Si `StartHour > EndHour` (cruza medianoche): `HourMatch = Time >= StartHour`
+   **OR** `Time < EndHour`.
+3. Un evento pertenece al día en que **empieza**. En la parte de madrugada
+   (`Time < EndHour`) `Day` ya subió, así que el cálculo de mes y día del mes
+   debe usar `Day - 1` para esa fila. Si no, la luna del día 5 buscaría el
+   día 6 y se apagaría a las 0:00.
+4. Por lo anterior, el cálculo de `LocalDayOfMonth` y `LocalMonth` pasa
+   **dentro** del loop (cada fila puede necesitar un `Day` distinto).
+5. Borde: en `Day = 1` con `Time < EndHour`, `Day - 1` da 0; proteger con
+   `Max (Integer)` contra 1.
+
+Resultado esperado: `StartHour = 18`, `EndHour = 6` funciona para lunas y
+eclipses lunares. El eclipse solar debe tener horario **de día** (ej. 10–14),
+porque es cuando el sol está visible.
+
+### 2. Prioridad: el eclipse reemplaza a la luna
+
+| Opción | Cómo funciona | Cambio |
+|---|---|---|
+| **A. Por tipo (recomendada)** | Si hay algún evento activo de tipo `SolarEclipse` o `LunarEclipse`, las filas `MoonPhase` se consideran inactivas | Dos pasadas por la tabla y variable local `EclipseActive`. No cambia el struct |
+| **B. Campo `Priority`** | Cada fila tiene `Priority` (Integer). Gana el mayor entre los activos | Campo nuevo en el struct. Escala mejor si hay más tipos |
+
+Con A, el flujo ENTER/EXIT existente se encarga solo: al empezar el eclipse la
+luna deja de estar activa (EXIT) y al terminar vuelve a imprimir ENTER si la
+luna sigue en su horario. **Decisión entre A y B: pendiente del usuario.**
+
+### 3. Otros pendientes de esta fase
+
+| Pendiente | Notas |
+|---|---|
+| Confirmar con el cliente la contradicción de reglas de eclipse | Ver sección Diseño objetivo |
+| Fila `Eclipse_Solar` con horario diurno | Depende del punto 1 |
+| Aplicar Estados a jugador **y** enemigos | Iterar actores con `BPI_Character` (patrón `Get All Actors with Interface`, como `BPI_IsLight`) o un manager central. Sin implementar |
+| Guardar/remover el Effect Handle al salir del evento | Reutilizar `Remove Status Effect By Handle` (ver `20_SYSTEM_States.md`, Bloque A) |
+| Alimentar el visual (`MoonPhase`, `Eclipse Phase`) desde el evento | Ver nota de diseño abajo |
+| Campo `StateRowHandle` en `STR_CelestialEvent` | Para vincular fila de `DT_States` |
+| Validación de datos de la tabla | Días/meses fuera de rango, `StartHour == EndHour` |
+
+> **Nota de diseño (decisión del usuario/cliente, anotada):** con la tabla por
+> calendario, el que manda es el calendario y el visual del shader se
+> alimentará **desde** el evento. Esto elimina el bloqueo anterior ("¿se puede
+> leer `MoonPhase` desde Blueprint?") para decidir *cuándo* aplicar un Estado.
+> Sigue pendiente saber cómo escribir `MoonPhase`/`Eclipse Phase` en
+> `MI_SkySpherePhases` cuando llegue la fase visual.
+
+---
+
+## Contexto histórico — pregunta abierta sobre número de fases
+
+> **Parcialmente superada** por el diseño por calendario, pero se conserva
+> como referencia para la fase visual.
+
+Del PDF original (tablas completas en `21_SYSTEM_DayNightCycle_Migration.md`):
+
+- **Fases lunares:** la tabla "Moon Phases" muestra 3 ejemplos de `MoonPhase`
+  (0.5 / 0.72 / 0.088). No queda claro si hay 3 fases discretas o un valor
+  continuo 0.0–1.0.
+- **Fases de eclipse:** 3 ejemplos de `EclipsePhase` (0.5 / 0.25 / 0.01) donde
+  también varía `SunScale`; probablemente ajustados a mano para las capturas.
+- **Inferencia (no confirmada):** ambos son `Scalar Parameter Value` continuos.
+  Para la fase visual habrá que decidir qué valor escribir por evento.
+
+---
+
+## Prueba de concepto — Poison de noche (✅ resuelta en sesión anterior)
+
+**Decisión de scope:** en vez de esperar a las fases, se aplicó `State_Poison`
+mientras es de noche, usando el booleano "es de noche" que `BP_DayNight` ya
+calcula en `CheckLight`. Se descartó un actor `BP_StateTrigger` independiente
+(overlap) para no duplicar la lógica día/noche.
 
 ```
 CheckLight (exec)
   → Sequence
-      Then 0 → Set Scalar Parameter Value → For Each Loop (All Lights in Level) → Turn on/Off Light   [cadena original, sin cambios]
-      Then 1 → Branch
-                  Condition ← NOT (mismo NOT que alimenta el For Each Loop — "es de noche")
-                  True →
-                    Get Player Character (Index 0)
-                    → Cast To BP_Character_Base
-                    Cast Success →
-                      Make DataTableRowHandle (DT_States, State_Poison)
-                      → Apply State (Target: As BP_Character_Base)
+      Then 0 → [luces, cadena original]
+      Then 1 → Branch (Condition ← NOT(In Range(Time, Sunrise Time, Sunset Time)))
+                  True → Get Player Character (0) → Cast To BP_Character_Base
+                           Cast Success → Make DataTableRowHandle (DT_States, State_Poison)
+                                        → Apply State (Target: As BP_Character_Base)
+      Then 2 → [Night Only Items — ver 23]
+      Then 3 → [SkyLight día/noche — ver 21]
+      Then 4 → [CheckCelestialEvents — esta sesión]
 ```
 
-**Confirmado por captura de pantalla:** todos los pines están conectados
-correctamente — `Array` del `For Each Loop` sí tiene `All Lights in Level`
-conectado, `Condition` del `Branch` sí tiene un cable (no un checkbox
-suelto) viniendo del `NOT`. El wiring en sí **no tiene el bug** — se
-descarta la hipótesis inicial de pines desconectados.
+**Bug resuelto:** el Poison nunca se removía. Causa raíz: `Sunrise Time` /
+`Sunset Time` en `0.0` (sin Instance Editable). Fix: expuestas +
+`Sunrise = 6.0` / `Sunset = 18.0`. Confirmado en juego. Detalle en `21`.
 
-### Bug confirmado — el Poison nunca se remueve, ni cruzando ciclos completos de día/noche
+**Lección de diagnóstico:** un `Print String` antes de un `Branch` no puede
+confirmar en qué rama entra la ejecución; debe ir **después**, en el pin
+`True` o `False` específico.
 
-**Síntoma:** tras dos ciclos completos de día/noche en juego, el Poison
-aplicado de noche nunca desaparece durante el día.
-
-**Método de diagnóstico usado — lección de arquitectura para futuras
-sesiones:** el primer intento de diagnóstico colocó un `Print String`
-**antes** del `Branch`, conectado directo al `Then 1` del `Sequence`. Ese
-print apareció constantemente, de día y de noche — lo cual **no es un bug**,
-es el comportamiento esperado: `Then 1` se ejecuta en cada tick del timer
-de `CheckLight` (cada `Total Day Night Time` segundos) sin importar el
-booleano. Un print colocado antes de un `Branch` nunca puede confirmar en
-qué rama del `Branch` está entrando la ejecución — **el print debe ir
-después del `Branch`, en el pin específico (`True` o `False`) que se quiere
-verificar.**
-
-Al mover el `Print String` al pin `True` del `Branch`, se confirmó:
-
-**Caso A confirmado:** el `Branch` entra en `True` de forma constante,
-sin nunca pasar a `False` — es decir, el booleano "es de noche"
-(`NOT (In Range(Time, Sunrise Time, Sunset Time))`) **nunca cambia a
-falso**, sin importar cuántos ciclos de día/noche transcurran en juego.
-
-**Esto descarta la hipótesis inicial** sobre `ApplyState`/`Time Remaining`
-en `Load Status Effect` — el problema no es que el Effect no expire, es que
-el trigger cree constantemente que es de noche y sigue reaplicando el
-Estado en cada tick de `CheckLight` (el guard de `ApplyState` evita
-duplicar la instancia, pero el efecto se ve "permanente" porque nunca deja
-de estar en el rango que lo dispara).
-
-### Hipótesis para la próxima sesión — posible causa raíz compartida con Problema Visual 1
-
-**No confirmado, marcado explícitamente como hipótesis a validar:** el
-mismo booleano `NOT (In Range(Time, Sunrise Time, Sunset Time))` alimenta
-tanto la rama de luces (`For Each Loop → Turn on/Off Light`, cadena
-original) como esta rama nueva de Poison. Si `Sunrise Time` y `Sunset Time`
-están mal configurados en la instancia de `BP_DayNight` (ej. ambos en
-`0.0`, o iguales entre sí, o fuera del rango esperado 0–24), **el mismo
-bug podría explicar simultáneamente:**
-1. Este bug nuevo (Poison "permanente", `In Range` siempre devuelve el
-   mismo resultado).
-2. **Problema Visual 1**, ya documentado en
-   `21_SYSTEM_DayNightCycle_Migration.md` (el cielo se ilumina de noche
-   como si fuera de día) — si el mismo `In Range` alimenta la lógica de
-   luces del nivel, un `Sunrise/Sunset Time` mal configurado afectaría
-   ambos sistemas a la vez, ya que comparten la misma condición booleana.
-
-**Acción pendiente para la próxima sesión (primera prioridad):**
-1. Seleccionar la instancia de `BP_DayNight` en el nivel (no la clase) →
-   panel Details → confirmar los valores reales de `Sunrise Time` y
-   `Sunset Time`.
-2. Confirmar que no sean iguales entre sí, no sean ambos `0.0`, y estén
-   dentro de un rango coherente con `Time` (0–24).
-3. Si el fix es simplemente corregir esos dos valores, revalidar en juego
-   tanto el Poison (debe desaparecer de día) como el Problema Visual 1
-   (la iluminación debería empezar a comportarse distinto) — un solo fix
-   podría resolver ambos pendientes.
-4. Si los valores ya son correctos, revisar los checkboxes `Inclusive Min`
-   / `Inclusive Max` de `In Range (Float)` — con ambos activados y
-   `Sunrise Time`/`Sunset Time` mal ordenados (ej. Sunrise > Sunset) el
-   rango lógico podría invertirse.
+**Pendiente heredado:** el Poison de noche solo se aplica al jugador y no se
+remueve explícitamente al amanecer más allá del Duration del efecto; revisar
+cuando se implemente el manejo de Estados por evento.
 
 ---
 
@@ -277,36 +277,27 @@ bug podría explicar simultáneamente:**
 
 | Problema | Notas | Estado |
 |---|---|---|
-| No confirmado si `MoonPhase`/`EclipsePhase` son legibles desde Blueprint | Puede que solo existan como parámetros de `MI_SkySpherePhases` sin variable equivalente en `BP_DayNight` | 🔴 Bloqueante — primera acción de esta sesión |
-| Número real de fases lunares sin definir | PDF ambiguo entre 3 fases discretas o valor continuo — ver sección dedicada arriba | 🔴 Pendiente decisión de diseño |
-| Número real de fases de eclipse sin definir | Mismo problema que fases lunares, agravado por `SunScale` variable entre ejemplos del PDF | 🔴 Pendiente decisión de diseño |
-| Mecanismo de aplicar el Estado a jugador Y enemigos | Requiere iterar sobre actores con `BPI_Character`, no solo `Get Player Character` — sin implementar | 🔴 Pendiente diseño e implementación |
-| Guard contra reaplicación en cada Tick mientras la fase está activa | Propuesta: variable booleana + detectar solo el cambio de estado, no el estado en sí | 🟡 Diseño propuesto, sin implementar |
-| Prueba de concepto con `State_Poison` | Implementada — wiring confirmado correcto por captura, reusa `CheckLight` en vez de actor `BP_StateTrigger` independiente | ✅ Implementado — bug funcional pendiente, ver fila siguiente |
-| **Bug — Poison nunca se remueve, `Branch` siempre entra en `True`** | ✅ **RESUELTO esta sesión.** Causa raíz confirmada: `Sunrise Time`/`Sunset Time` en `0.0` (sin Instance Editable activado, invisibles en Details hasta corregir). Fix: expuestas + `Sunrise=6.0`/`Sunset=18.0`. Confirmado en juego — el Poison ya se activa/desactiva con el ciclo. Ver detalle completo en `21_SYSTEM_DayNightCycle_Migration.md`. | ✅ Resuelto |
-| **Nuevo — desincronización entre Poison/luces (lógico) y sol/luna (visual, `Sun Yaw`)** | El Poison ahora sigue el umbral `Time=6/18` correctamente, pero ese umbral no coincide con cuándo el sol/luna están visualmente en el cielo (curva `Sun Yaw` sin calibrar). Pendiente aprobación del líder de proyecto sobre convención de horarios antes de recalibrar. Ver sección dedicada en `21_SYSTEM_DayNightCycle_Migration.md`. | 🔴 Pendiente aprobación de diseño |
+| Eventos que cruzan medianoche | Ver pendiente 1 | 🔴 Siguiente sesión |
+| Prioridad eclipse sobre luna | Ver pendiente 2 (opción A o B) | 🔴 Siguiente sesión |
+| Contradicción de reglas de eclipse del cliente | Ver Diseño objetivo | 🟡 Confirmar con el cliente |
+| Aplicar Estado a jugador Y enemigos | Requiere iterar actores con `BPI_Character` | 🔴 Pendiente diseño e implementación |
+| Remover Estado al terminar el evento | Guardar Effect Handles aplicados por evento | 🔴 Pendiente |
+| Alimentar visual (`MoonPhase`, `Eclipse Phase`) | Sin diseño | 🟡 Pendiente |
+| Duración real del ciclo no medida | Afecta granularidad del log | ⏳ Pendiente medir |
+| Desincronización Poison/luces vs visual (`Sun Yaw`) | **✅ Resuelta** — `Sunrise 6` / `Sunset 18` + `Sun Yaw` 90→450 Linear. Ver `21` | ✅ Resuelto |
+| Poison "nunca se remueve" | ✅ Resuelto (Sunrise/Sunset en 0.0) | ✅ Resuelto |
 
 ---
 
 ## Ver también
 
-- `20_SYSTEM_States.md` — sistema de Estados (`DT_States`,
-  `BP_StateApplier`), reutilizado sin modificar en este sistema.
-- `21_SYSTEM_DayNightCycle_Migration.md` — sistema base de ciclo día/noche,
-  incluye discrepancia de nombre `BP_DayNight` vs `BP_DayNightCycle` y la
-  lista completa de parámetros de `MI_SkySpherePhases` confirmados por el
-  PDF original.
-- `15_SYSTEM_StatusEffects.md` — patrón de trigger mínimo
-  (`Make DataTableRowHandle` → `Make STR_SaveData_StatusEffect` →
-  `Load Status Effect`) reutilizable si se decide aplicar el Effect
-  directamente en vez de pasar por la capa de State.
+- `20_SYSTEM_States.md` — `DT_States`, `BP_StateApplier` (reutilizado sin modificar).
+- `21_SYSTEM_DayNightCycle_Migration.md` — ciclo base, `Day` por ciclo, `Days Per Month` / `Months Per Year`.
+- `15_SYSTEM_StatusEffects.md` — patrón de trigger mínimo reutilizable.
+- `23_SYSTEM_ItemSpawner_Investigacion.md` — `Night Only Items`, mismo hook `CheckLight`.
 
 ---
 
-*Archivo creado — sesión Light Paradox (inicio del sistema de fases
-lunares y eclipse vinculadas a Estados). Documenta diseño objetivo
-confirmado por el cliente, ambigüedad sin resolver sobre el número real de
-fases (lunares y eclipse) según el documento original del programador, y
-plan de prueba de concepto usando `State_Poison` como Estado de testing
-antes de tomar decisiones de diseño final.*
+*Archivo actualizado — sesión Light Paradox (DT_CelestialEvents v1).*
+*Cambios: añadida implementación v1 (`E_CelestialEventType`, `STR_CelestialEvent` con `EventMonths`/`EventDays`, `DT_CelestialEvents` con filas de prueba, función `CheckCelestialEvents`, `Then 4`); reglas de calendario del cliente y contradicción registrada; pendientes de la siguiente sesión (medianoche, prioridad de eclipses); plan de pruebas con `Day` fijo; sección de pregunta de fases marcada como parcialmente superada.*
 *Project: Light Paradox · Base: EasySurvivalRPGv5 · UE 5.4.4*
